@@ -90,7 +90,6 @@ function openAuthScreen(tab) {
 $("start-signin").addEventListener("click", () => openAuthScreen("signin"));
 $("start-create").addEventListener("click", () => openAuthScreen("signup"));
 $("auth-back").addEventListener("click", () => goToScreen("start-screen"));
-$("start-skip").addEventListener("click", enterDashboard);
 
 $("signin-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -185,8 +184,7 @@ async function enterDashboard() {
 async function loadGroups() {
   const grid = $("groups-grid");
   if (!currentUser) {
-    // "Skip for now" testing mode: no real account, nothing to load.
-    grid.innerHTML = `<p class="empty-state">Sign in to see your real groups. (You're in local testing mode.)</p>`;
+    grid.innerHTML = `<p class="empty-state">Sign in to see your groups.</p>`;
     return;
   }
 
