@@ -418,6 +418,35 @@ input:focus, textarea:focus, button:focus-visible {
   margin: 4px 0 0;
 }
 
+/* ---------- Help: "How it works" ---------- */
+.help-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.help-list li {
+  display: flex;
+  gap: 12px;
+  padding: 14px 12px;
+  border-radius: 10px;
+  margin-bottom: 10px;
+  background: var(--paper-raised);
+}
+.help-list .help-icon {
+  font-size: 1.4rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.help-list h4 {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+}
+.help-list p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--evergreen-dark);
+}
+
 #member-search-results li {
   display: flex;
   align-items: center;
