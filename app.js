@@ -72,7 +72,7 @@ function goToScreen(id) {
   // The drawer/settings/add-item overlays only make sense once you're
   // signed in and past the profile-completion gate -- close them on the
   // way to any other screen (start, auth, complete-profile).
-  if (id !== "dashboard-screen" && id !== "group-screen" && id !== "admin-screen") {
+  if (id !== "dashboard-screen" && id !== "group-screen" && id !== "admin-screen" && id !== "help-screen") {
     closeDrawer();
     $("settings-backdrop").classList.add("hidden");
     $("settings-modal").classList.add("hidden");
@@ -252,10 +252,18 @@ $("complete-profile-logout").addEventListener("click", signOutEverywhere);
 // Dashboard — your groups
 // ============================================================
 async function enterDashboard() {
-  goToScreen("dashboard-screen");
   const grid = $("groups-grid");
   grid.innerHTML = skeletonGroupCards(3);
   await loadGroups();
+  // Show the "How it works" tour automatically the first time this
+  // browser ever reaches the dashboard, then never again on this device
+  // (people can still reopen it anytime from the menu).
+  if (!localStorage.getItem("wishlist-tutorial-seen")) {
+    localStorage.setItem("wishlist-tutorial-seen", "1");
+    goToScreen("help-screen");
+  } else {
+    goToScreen("dashboard-screen");
+  }
 }
 
 async function loadGroups() {
@@ -626,6 +634,16 @@ if ($("drawer-admin-btn")) {
   });
 }
 $("back-to-dashboard-from-admin").addEventListener("click", () => goToScreen("dashboard-screen"));
+
+$("drawer-help-btn").addEventListener("click", () => {
+  closeDrawer();
+  openHelpScreen();
+});
+$("back-to-dashboard-from-help").addEventListener("click", () => goToScreen("dashboard-screen"));
+
+function openHelpScreen() {
+  goToScreen("help-screen");
+}
 
 // ---------- Admin: reset any account's password ----------
 // Stands in for the old email-based "forgot password" flow, which this
