@@ -19,6 +19,9 @@ other group members can see (but not their own -- no spoiling surprises).
 - **`api/scrape.js`, `api/chat.js`** — small serverless functions. These
   can't run on GitHub Pages (it only serves static files) — they need
   **Vercel**, which is why the site is deployed there too.
+- **`assets/logo.png`** — a spare logo/photo asset. Not currently
+  referenced by the site (the header logo mark is drawn as inline SVG),
+  kept here for future use.
 
 ## Where things are hosted
 
@@ -26,8 +29,10 @@ other group members can see (but not their own -- no spoiling surprises).
 - **Static site (GitHub Pages):** `https://wishlist-code.github.io/Wishlist/`
   — good for quickly checking the UI, but the AI assistant and the
   link-preview scraper won't work here (no serverless functions).
-- **Full site with working API routes (Vercel):** set up by connecting
-  the same GitHub repo to a new Vercel project. See "Vercel setup" below.
+- **Full site with working API routes (Vercel):** `https://wishlist-wine-kappa.vercel.app`
+  — this is the one to actually use day-to-day, since it's the only place
+  both `/api/scrape` and `/api/chat` work. Connected to the same GitHub
+  repo, so every push to `main` auto-deploys here too.
 - **Database (Supabase):** project "Heavenly View Wishlist", org "Star
   INC.", project ref `fobobmhfuevqdgvvyxxm`.
 
@@ -52,41 +57,35 @@ other group members can see (but not their own -- no spoiling surprises).
    Email** if you'd rather people get in immediately, which may suit a
    small family app better.
 
-## Vercel setup
+## Vercel setup (already done once, kept here for reference)
 
-The `api/` folder only runs on Vercel, not on GitHub Pages. To get it live:
+The `api/` folder only runs on Vercel, not on GitHub Pages.
 
 1. In Vercel, "Add New Project" and import the `WishList-Code/Wishlist`
    GitHub repo.
 2. No build settings are needed — it's a static site with serverless
-   functions, so the defaults work (leave "Framework Preset" as Other /
-   None, no build command needed).
-3. Before or after the first deploy, add an environment variable:
+   functions, so the defaults work (Framework Preset "Other", no build
+   command).
+3. Add an environment variable:
    - **Name:** `GEMINI_API_KEY`
-   - **Value:** your own Google Gemini API key (get one at
+   - **Value:** a Google Gemini API key (get one at
      [aistudio.google.com/apikey](https://aistudio.google.com/apikey))
    - This is what lets `api/chat.js` (the gift-idea assistant) work. It's
      never used client-side, so it's safe to store as a normal (not
      client-exposed) env var.
-4. Deploy. Vercel gives you a URL like
-   `https://wishlist-<something>.vercel.app` — that's the one to actually
-   use day-to-day, since it's the only place both API routes work.
-5. To sanity-check the deploy:
-   - `https://<your-vercel-url>/api/scrape` should respond (not 404) to a
-     POST with `{"url": "https://example.com"}`.
-   - `https://<your-vercel-url>/api/chat` should respond (not 404) to a
-     POST with `{"message": "my mom loves gardening"}` — assuming
-     `GEMINI_API_KEY` is set, it should return `{"reply": "..."}`.
+4. Deploy. Every push to `main` on GitHub auto-redeploys.
+5. To sanity-check the deploy, POST to `/api/scrape` with
+   `{"url": "https://example.com"}` and to `/api/chat` with
+   `{"message": "my mom loves gardening"}` — neither should 404, and
+   `/api/chat` should come back with a real `{"reply": "..."}`.
 
 ## Known gaps / things to revisit
 
-- **`assets/` casing:** the logo currently lives at `Assets/logo.png`
-  (capital A) because of how it was first uploaded. GitHub's web editor
-  can only rename/move a file within its current folder, so moving it
-  into a lowercase `assets/` folder needs to be done either by dragging it
-  in GitHub's file browser, or by uploading a fresh copy to `assets/` and
-  deleting the old one.
-- **`assets/logo-full.jpg`** — not yet added; add it the same way if/when
-  there's a wordmark version of the logo to use.
+- **`assets/logo-full.jpg`** — not currently added (no wordmark version of
+  the logo exists yet); nothing in the site references it, so this is
+  safe to leave out.
 - Email/password is the only sign-in method right now (no magic links, no
   social sign-in) — intentional, to keep the first version simple.
+- The Gemini model used in `api/chat.js` is `gemini-3.6-flash`. If Google
+  deprecates it later, the error message from the API will name the
+  replacement model to switch to.
