@@ -387,6 +387,38 @@ input:focus, textarea:focus, button:focus-visible {
   margin-left: 6px;
 }
 
+/* ---------- Group members landing view + owner "add by name" ---------- */
+#group-wishlist-view #back-to-members {
+  display: block;
+  margin-bottom: 10px;
+}
+
+#owner-add-member {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.member-search-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.member-search-row input { flex: 1; }
+
+#member-search-results li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: default;
+}
+#member-search-results li:hover { background: none; }
+
+.bought-tag {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--evergreen-dark);
+}
 /* ---------- Right-side group menu drawer ---------- */
 #drawer-backdrop {
   position: fixed;
@@ -443,7 +475,7 @@ input:focus, textarea:focus, button:focus-visible {
   margin: 0 0 8px;
 }
 
-.drawer-settings-btn, .drawer-add-btn {
+.drawer-settings-btn {
   width: 100%;
   text-align: left;
   background: var(--blush);
@@ -454,11 +486,7 @@ input:focus, textarea:focus, button:focus-visible {
   font-size: 0.9rem;
   color: var(--ink);
 }
-.drawer-add-btn {
-  background: var(--gold);
-}
 .drawer-settings-btn:hover { filter: brightness(0.97); }
-.drawer-add-btn:hover { background: var(--gold-dark); }
 
 /* ---------- Theme toggle (light / dark / system) ---------- */
 .theme-toggle {
