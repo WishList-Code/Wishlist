@@ -895,6 +895,41 @@ button[aria-busy="true"] {
   line-height: 1.45;
 }
 
+/* ============================================================
+   iPhone "add to Home Screen" nudge -- shown once, explaining why
+   notifications need the site installed to the Home Screen on iOS
+   (see maybeShowIosInstallBanner in app.js).
+   ============================================================ */
+.ios-install-banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--evergreen);
+  color: var(--paper);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+}
+.ios-install-banner span { flex: 1; }
+.ios-install-banner button {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--paper);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  opacity: 0.85;
+}
+.ios-install-banner button:hover { opacity: 1; }
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
