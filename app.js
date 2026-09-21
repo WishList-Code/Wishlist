@@ -17,6 +17,18 @@ let currentGroupOwnerId = null; // uuid of the group's creator (owner)
 let currentMembers = [];        // [{ user_id, nickname }]
 let currentMemberId = null;     // whose wishlist is showing in group-screen
 
+// The one account allowed to reset other people's passwords (see the
+// Admin screen below) -- there's no email delivery reliable enough for
+// self-serve "forgot password" on this project, so instead the family
+// admin can just set someone's password directly from within the app.
+// This client-side check only controls whether the Admin button/screen
+// show up -- the actual enforcement happens server-side in the
+// api/admin-* functions, which re-check the caller's token independently.
+const ADMIN_EMAIL = "sam.matthew.starner@gmail.com";
+function isAdmin() {
+  return !!(currentUser && currentUser.email === ADMIN_EMAIL);
+}
+
 // ---------- Theme: light / dark / system ----------
 function applyTheme(choice) {
   if (choice === "system") {
@@ -60,7 +72,7 @@ function goToScreen(id) {
   // The drawer/settings/add-item overlays only make sense once you're
   // signed in and past the profile-completion gate -- close them on the
   // way to any other screen (start, auth, complete-profile).
-  if (id !== "dashboard-screen" && id !== "group-screen") {
+  if (id !== "dashboard-screen" && id !== "group-screen" && id !== "admin-screen") {
     closeDrawer();
     $("settings-backdrop").classList.add("hidden");
     $("settings-modal").classList.add("hidden");
@@ -140,66 +152,6 @@ $("signup-form").addEventListener("submit", async (e) => {
   await onSignedIn(data.user);
 });
 
-$("forgot-password-link").addEventListener("click", async () => {
-  const email = $("signin-email").value.trim();
-  if (!email) {
-    $("auth-error").textContent = "Enter your email above first, then click \"Forgot password?\" again.";
-    return;
-  }
-  const { error } = await sb.auth.resetPasswordForEmail(email);
-  $("auth-error").style.color = error ? "var(--danger)" : "var(--evergreen)";
-  $("auth-error").textContent = error ? error.message : "Password reset email sent.";
-});
-
-// ---------- Password reset (the other end of "Forgot password?") ----------
-// Clicking the link in that email brings someone back here with a
-// recovery token in the URL. Supabase's client picks that up on load,
-// signs them into a temporary recovery session, and fires this event --
-// that's the signal to show the "set a new password" screen instead of
-// wherever the normal sign-in flow below would otherwise send them.
-let inPasswordRecovery = false;
-sb.auth.onAuthStateChange((event, session) => {
-  if (event === "PASSWORD_RECOVERY" && session && session.user) {
-    inPasswordRecovery = true;
-    currentUser = { id: session.user.id, email: session.user.email };
-    showResetPasswordScreen();
-  }
-});
-
-function showResetPasswordScreen() {
-  $("reset-password-error").textContent = "";
-  $("reset-password-new").value = "";
-  $("reset-password-confirm").value = "";
-  goToScreen("reset-password-screen");
-}
-
-$("reset-password-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const newPassword = $("reset-password-new").value;
-  const confirm = $("reset-password-confirm").value;
-  $("reset-password-error").textContent = "";
-  if (newPassword.length < 6) {
-    $("reset-password-error").textContent = "Password must be at least 6 characters.";
-    return;
-  }
-  if (newPassword !== confirm) {
-    $("reset-password-error").textContent = "Passwords don't match.";
-    return;
-  }
-  const { error } = await sb.auth.updateUser({ password: newPassword });
-  if (error) {
-    $("reset-password-error").textContent = "Couldn't update password: " + error.message;
-    return;
-  }
-  inPasswordRecovery = false;
-  await loadCurrentUserProfile();
-  if (!hasCompleteProfile()) {
-    showCompleteProfileScreen();
-    return;
-  }
-  await enterDashboard();
-});
-
 // Shows the signed-in account's name in the drawer (this replaced the
 // old header name+"Log out" badge -- the drawer is now the one place
 // that shows who you're signed in as).
@@ -219,6 +171,9 @@ async function loadCurrentUserProfile() {
   currentUser.lastName = data ? data.last_name : null;
   const fullName = [currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ");
   setAccountName(fullName || currentUser.email);
+  if ($("drawer-admin-btn")) {
+    $("drawer-admin-btn").classList.toggle("hidden", !isAdmin());
+  }
 }
 
 async function signOutEverywhere() {
@@ -248,11 +203,8 @@ async function onSignedIn(user) {
 // Resume an existing session on page load (so people don't have to
 // sign in again every visit), otherwise stay on the start screen.
 (async () => {
-  // A password-recovery link is handled by the onAuthStateChange listener
-  // above instead -- don't race it into the normal dashboard.
-  if (window.location.hash.includes("type=recovery")) return;
   const { data } = await sb.auth.getSession();
-  if (data.session && data.session.user && !inPasswordRecovery) {
+  if (data.session && data.session.user) {
     currentUser = { id: data.session.user.id, email: data.session.user.email };
     await loadCurrentUserProfile();
     if (!hasCompleteProfile()) {
@@ -666,6 +618,137 @@ $("drawer-settings-btn").addEventListener("click", () => {
   closeDrawer();
   openSettingsModal();
 });
+
+if ($("drawer-admin-btn")) {
+  $("drawer-admin-btn").addEventListener("click", () => {
+    closeDrawer();
+    openAdminScreen();
+  });
+}
+$("back-to-dashboard-from-admin").addEventListener("click", () => goToScreen("dashboard-screen"));
+
+// ---------- Admin: reset any account's password ----------
+// Stands in for the old email-based "forgot password" flow, which this
+// project's email delivery couldn't make reliable (see git history).
+// Only visible/usable by ADMIN_EMAIL -- see isAdmin() above -- and the
+// two api/admin-* serverless functions re-check that independently
+// using the caller's own auth token, so this isn't just a client-side
+// gate.
+async function openAdminScreen() {
+  goToScreen("admin-screen");
+  $("admin-user-list").innerHTML = `<li class="empty-state">Loading accounts…</li>`;
+  await loadAdminUsers();
+}
+
+async function loadAdminUsers() {
+  const list = $("admin-user-list");
+  try {
+    const { data: sessionData } = await sb.auth.getSession();
+    const token = sessionData && sessionData.session && sessionData.session.access_token;
+    const res = await fetch("/api/admin-list-users", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      list.innerHTML = `<li class="empty-state">Couldn't load accounts: ${escapeHtml(result.error || "unknown error")}</li>`;
+      return;
+    }
+    const users = result.users || [];
+    if (users.length === 0) {
+      list.innerHTML = `<li class="empty-state">No accounts found.</li>`;
+      return;
+    }
+    list.innerHTML = users.map(u => {
+      const fullName = [u.first_name, u.last_name].filter(Boolean).join(" ") || "(no name on file)";
+      return `
+        <li>
+          <div class="admin-user-row">
+            <div>
+              <strong>${escapeHtml(fullName)}</strong>
+              <div style="font-size:0.8rem; color:var(--evergreen-dark);">${escapeHtml(u.email || "")}</div>
+            </div>
+            <button class="btn btn-ghost btn-small" data-admin-reset-btn="${u.id}">Reset password</button>
+          </div>
+          <div class="admin-reset-form hidden" id="admin-reset-form-${u.id}"></div>
+        </li>
+      `;
+    }).join("");
+
+    list.querySelectorAll("[data-admin-reset-btn]").forEach(btn => {
+      btn.addEventListener("click", () => showAdminResetForm(btn.dataset.adminResetBtn));
+    });
+  } catch (err) {
+    list.innerHTML = `<li class="empty-state">Couldn't load accounts: ${escapeHtml(err.message)}</li>`;
+  }
+}
+
+function showAdminResetForm(userId) {
+  const container = $("admin-reset-form-" + userId);
+  if (!container) return;
+  const isOpen = !container.classList.contains("hidden");
+  // Toggle: clicking "Reset password" again on an already-open row closes it.
+  if (isOpen) {
+    container.classList.add("hidden");
+    container.innerHTML = "";
+    return;
+  }
+  container.classList.remove("hidden");
+  container.innerHTML = `
+    <div class="field">
+      <label>New password</label>
+      <input type="password" id="admin-reset-new-${userId}" minlength="6" autocomplete="new-password" />
+    </div>
+    <div class="field">
+      <label>Confirm new password</label>
+      <input type="password" id="admin-reset-confirm-${userId}" minlength="6" autocomplete="new-password" />
+    </div>
+    <p class="admin-reset-error" id="admin-reset-error-${userId}"></p>
+    <div style="display:flex; gap:8px;">
+      <button class="btn btn-ghost btn-small" style="flex:1;" data-admin-cancel="${userId}">Cancel</button>
+      <button class="btn btn-primary btn-small" style="flex:1;" data-admin-save="${userId}">Save new password</button>
+    </div>
+  `;
+  container.querySelector(`[data-admin-cancel="${userId}"]`).addEventListener("click", () => {
+    container.classList.add("hidden");
+    container.innerHTML = "";
+  });
+  container.querySelector(`[data-admin-save="${userId}"]`).addEventListener("click", () => performAdminReset(userId));
+}
+
+async function performAdminReset(userId) {
+  const newPassword = $("admin-reset-new-" + userId).value;
+  const confirm = $("admin-reset-confirm-" + userId).value;
+  const errorEl = $("admin-reset-error-" + userId);
+  errorEl.style.color = "var(--danger)";
+  errorEl.textContent = "";
+  if (newPassword.length < 6) {
+    errorEl.textContent = "Password must be at least 6 characters.";
+    return;
+  }
+  if (newPassword !== confirm) {
+    errorEl.textContent = "Passwords don't match.";
+    return;
+  }
+
+  try {
+    const { data: sessionData } = await sb.auth.getSession();
+    const token = sessionData && sessionData.session && sessionData.session.access_token;
+    const res = await fetch("/api/admin-reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ target_user_id: userId, new_password: newPassword }),
+    });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      errorEl.textContent = "Couldn't update password: " + (result.error || "unknown error");
+      return;
+    }
+    errorEl.style.color = "var(--evergreen)";
+    errorEl.textContent = "Password updated.";
+  } catch (err) {
+    errorEl.textContent = "Couldn't update password: " + err.message;
+  }
+}
 
 // ---------- Add-to-wishlist modal ----------
 function openAddItemModal() {
