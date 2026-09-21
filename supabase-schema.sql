@@ -350,3 +350,35 @@ revoke all on function public.search_profiles_by_name(text) from public;
 revoke all on function public.add_group_member_by_id(uuid, uuid) from public;
 grant execute on function public.search_profiles_by_name(text) to authenticated;
 grant execute on function public.add_group_member_by_id(uuid, uuid) to authenticated;
+
+-- ============================================================
+-- 8. Push notification subscriptions
+-- ============================================================
+-- One row per browser/device that has turned on "Notify me when someone
+-- adds an item" in Settings. The app itself only ever inserts/deletes
+-- its own rows (policies below); api/send-item-notification.js reads
+-- across users with the service_role key, which bypasses RLS entirely,
+-- to actually find who to notify.
+
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth_key text not null,
+  created_at timestamptz not null default now()
+);
+
+alter table public.push_subscriptions enable row level security;
+
+create policy "a user can view their own push subscriptions"
+  on public.push_subscriptions for select
+  using (user_id = auth.uid());
+
+create policy "a user can add their own push subscription"
+  on public.push_subscriptions for insert
+  with check (user_id = auth.uid());
+
+create policy "a user can remove their own push subscription"
+  on public.push_subscriptions for delete
+  using (user_id = auth.uid());
