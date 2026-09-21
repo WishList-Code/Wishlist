@@ -6,7 +6,7 @@
 <title>Wishlist — group gift lists for family &amp; friends</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=4" />
+<link rel="stylesheet" href="style.css?v=5" />
 </head>
 <body>
 
@@ -59,6 +59,14 @@
     </form>
 
     <form id="signup-form" class="auth-form hidden">
+      <div class="field">
+        <label>First name</label>
+        <input type="text" id="signup-first-name" required autocomplete="given-name" />
+      </div>
+      <div class="field">
+        <label>Last name</label>
+        <input type="text" id="signup-last-name" required autocomplete="family-name" />
+      </div>
       <div class="field">
         <label>Email</label>
         <input type="email" id="signup-email" required autocomplete="email" />
@@ -139,7 +147,29 @@
       </div>
     </div>
 
-    <div>
+    <!-- People in this group, alphabetically. This is what you see first
+         when you open a group -- tap a person to see their wishlist. -->
+    <div id="group-members-view">
+      <h3 style="font-size:0.95rem;">People in this group</h3>
+      <ul class="member-list" id="member-list">
+        <!-- filled in by app.js from this group's real members -->
+      </ul>
+
+      <div id="owner-add-member" class="hidden">
+        <h4 style="font-size:0.85rem; margin-top:20px;">Add someone by name</h4>
+        <div class="member-search-row">
+          <input type="text" id="member-search-input" placeholder="Search by name..." />
+          <button class="btn btn-ghost btn-small" id="member-search-btn">Search</button>
+        </div>
+        <ul class="member-list" id="member-search-results">
+          <!-- filled in by app.js from search_profiles_by_name -->
+        </ul>
+      </div>
+    </div>
+
+    <!-- One person's wishlist. Hidden until you tap someone above. -->
+    <div id="group-wishlist-view" class="hidden">
+      <button class="btn-text" id="back-to-members">&larr; People</button>
       <h3 id="wishlist-owner-heading" style="font-size:0.95rem;">Your wishlist</h3>
       <div class="wishlist-items" id="wishlist-items">
         <!-- filled in by JS based on selected member -->
@@ -191,19 +221,6 @@
   <div class="drawer-section">
     <button class="drawer-settings-btn" id="drawer-settings-btn">⚙️ Settings</button>
   </div>
-
-  <div id="drawer-group-only" class="hidden">
-    <div class="drawer-section">
-      <button class="drawer-add-btn" id="drawer-add-item-btn">+ Add to wishlist</button>
-    </div>
-
-    <div class="drawer-section">
-      <h4>Members</h4>
-      <ul class="member-list" id="member-list">
-        <!-- filled in by app.js from this group's real members -->
-      </ul>
-    </div>
-  </div>
 </aside>
 
 <!-- ---------- Settings modal (overlay on top of everything) ---------- -->
@@ -240,6 +257,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="config.js?v=1"></script>
-<script src="app.js?v=1"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>
