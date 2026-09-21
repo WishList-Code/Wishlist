@@ -10,11 +10,12 @@ const $ = (id) => document.getElementById(id);
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ---------- App state ----------
-let currentUser = null;      // { id, email }
-let currentGroupId = null;   // uuid of the group currently open
+let currentUser = null;         // { id, email, firstName, lastName }
+let currentGroupId = null;      // uuid of the group currently open
 let currentGroupName = "";
-let currentMembers = [];     // [{ user_id, nickname, email }]
-let currentMemberId = null;  // whose wishlist is showing in group-screen
+let currentGroupOwnerId = null; // uuid of the group's creator (owner)
+let currentMembers = [];        // [{ user_id, nickname }]
+let currentMemberId = null;     // whose wishlist is showing in group-screen
 
 // ---------- Theme: light / dark / system ----------
 function applyTheme(choice) {
@@ -57,7 +58,6 @@ function goToScreen(id) {
   document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
   $(id).classList.add("active");
   $("ai-fab").classList.toggle("hidden", id !== "group-screen");
-  $("drawer-group-only").classList.toggle("hidden", id !== "group-screen");
   if (id !== "group-screen") {
     $("ai-panel").classList.add("hidden");
     closeDrawer();
@@ -106,15 +106,25 @@ $("signin-form").addEventListener("submit", async (e) => {
 
 $("signup-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const firstName = $("signup-first-name").value.trim();
+  const lastName = $("signup-last-name").value.trim();
   const email = $("signup-email").value.trim();
   const password = $("signup-password").value;
   const confirm = $("signup-password-confirm").value;
   $("auth-error").textContent = "";
+  if (!firstName || !lastName) {
+    $("auth-error").textContent = "Enter your first and last name.";
+    return;
+  }
   if (password !== confirm) {
     $("auth-error").textContent = "Passwords don't match.";
     return;
   }
-  const { data, error } = await sb.auth.signUp({ email, password });
+  const { data, error } = await sb.auth.signUp({
+    email,
+    password,
+    options: { data: { first_name: firstName, last_name: lastName } },
+  });
   if (error) {
     $("auth-error").textContent = error.message;
     return;
@@ -140,8 +150,22 @@ $("forgot-password-link").addEventListener("click", async () => {
   $("auth-error").textContent = error ? error.message : "Password reset email sent.";
 });
 
-function setUserBadge(email) {
-  document.querySelectorAll(".user-badge-email").forEach(el => { el.textContent = email || ""; });
+function setUserBadge(text) {
+  document.querySelectorAll(".user-badge-email").forEach(el => { el.textContent = text || ""; });
+}
+
+// Look up the signed-in user's name (for the header badge and defaults
+// elsewhere) now that accounts have real first/last names.
+async function loadCurrentUserProfile() {
+  const { data } = await sb
+    .from("profiles")
+    .select("first_name, last_name")
+    .eq("id", currentUser.id)
+    .maybeSingle();
+  currentUser.firstName = data ? data.first_name : null;
+  currentUser.lastName = data ? data.last_name : null;
+  const fullName = [currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ");
+  setUserBadge(fullName || currentUser.email);
 }
 
 async function signOutEverywhere() {
@@ -156,7 +180,7 @@ document.querySelectorAll(".header-logout-btn").forEach(btn => {
 
 async function onSignedIn(user) {
   currentUser = { id: user.id, email: user.email };
-  setUserBadge(currentUser.email);
+  await loadCurrentUserProfile();
   await enterDashboard();
 }
 
@@ -166,7 +190,7 @@ async function onSignedIn(user) {
   const { data } = await sb.auth.getSession();
   if (data.session && data.session.user) {
     currentUser = { id: data.session.user.id, email: data.session.user.email };
-    setUserBadge(currentUser.email);
+    await loadCurrentUserProfile();
     await enterDashboard();
   }
 })();
@@ -184,13 +208,13 @@ async function enterDashboard() {
 async function loadGroups() {
   const grid = $("groups-grid");
   if (!currentUser) {
-    grid.innerHTML = `<p class="empty-state">Sign in to see your groups.</p>`;
+    grid.innerHTML = `<p class="empty-state">Sign in to see your real groups.</p>`;
     return;
   }
 
   const { data, error } = await sb
     .from("group_members")
-    .select("nickname, groups ( id, name, invite_code )")
+    .select("nickname, groups ( id, name, invite_code, created_by )")
     .eq("user_id", currentUser.id);
 
   if (error) {
@@ -206,7 +230,7 @@ async function loadGroups() {
   }
 
   grid.innerHTML = groups.map(g => `
-    <div class="group-tag" data-group-id="${g.id}" data-group-name="${escapeHtml(g.name)}" data-invite-code="${g.invite_code}">
+    <div class="group-tag" data-group-id="${g.id}" data-group-name="${escapeHtml(g.name)}" data-invite-code="${g.invite_code}" data-owner-id="${g.created_by || ""}">
       <h3>${escapeHtml(g.name)}</h3>
       <div class="invite-code">Invite code: ${g.invite_code}</div>
     </div>
@@ -217,7 +241,7 @@ async function loadGroups() {
 function attachGroupCardHandlers() {
   document.querySelectorAll(".group-tag").forEach(card => {
     card.addEventListener("click", () => {
-      openGroup(card.dataset.groupId, card.dataset.groupName, card.dataset.inviteCode);
+      openGroup(card.dataset.groupId, card.dataset.groupName, card.dataset.inviteCode, card.dataset.ownerId);
     });
   });
 }
@@ -241,9 +265,11 @@ if (createGroupBtn) {
       .single();
     if (error) { alert("Couldn't create group: " + error.message); return; }
 
+    // No nickname override -- the display name falls back to the
+    // member's real first/last name (set at sign-up).
     const { error: memberError } = await sb
       .from("group_members")
-      .insert({ group_id: group.id, user_id: currentUser.id, nickname: "You" });
+      .insert({ group_id: group.id, user_id: currentUser.id });
     if (memberError) { alert("Group created, but couldn't add you to it: " + memberError.message); return; }
 
     newGroupNameInput.value = "";
@@ -266,7 +292,7 @@ if (joinGroupBtn) {
 
     const { error: memberError } = await sb
       .from("group_members")
-      .insert({ group_id: group.id, user_id: currentUser.id, nickname: "You" });
+      .insert({ group_id: group.id, user_id: currentUser.id });
     if (memberError) { alert("Couldn't join: " + memberError.message); return; }
 
     joinCodeInput.value = "";
@@ -293,23 +319,36 @@ function skeletonGroupCards(count) {
     </div>
   `).join("");
 }
+// ============================================================
+// Group screen — people list, then a person's wishlist
+// ============================================================
+function showMembersView() {
+  $("group-members-view").classList.remove("hidden");
+  $("group-wishlist-view").classList.add("hidden");
+}
+function showWishlistView() {
+  $("group-members-view").classList.add("hidden");
+  $("group-wishlist-view").classList.remove("hidden");
+}
 
-// ============================================================
-// Group screen — members + wishlist items
-// ============================================================
-async function openGroup(groupId, groupName, inviteCode) {
+async function openGroup(groupId, groupName, inviteCode, ownerId) {
   currentGroupId = groupId;
   currentGroupName = groupName;
+  currentGroupOwnerId = ownerId || null;
   $("group-view-title").textContent = groupName;
   $("group-invite-code").textContent = inviteCode ? `Invite code: ${inviteCode}` : "";
+  $("owner-add-member").classList.toggle("hidden", !(currentUser && currentGroupOwnerId === currentUser.id));
+  $("member-search-input").value = "";
+  $("member-search-results").innerHTML = "";
   goToScreen("group-screen");
+  showMembersView();
   await loadMembers();
 }
 
 async function loadMembers() {
   const { data, error } = await sb
     .from("group_members")
-    .select("user_id, nickname, profiles ( email )")
+    .select("user_id, nickname, profiles ( first_name, last_name, email )")
     .eq("group_id", currentGroupId);
 
   const list = $("member-list");
@@ -318,28 +357,79 @@ async function loadMembers() {
     return;
   }
 
-  currentMembers = (data || []).map(row => ({
-    user_id: row.user_id,
-    nickname: row.nickname || (row.profiles ? row.profiles.email : "Member"),
-  }));
+  currentMembers = (data || []).map(row => {
+    const p = row.profiles || {};
+    const fullName = [p.first_name, p.last_name].filter(Boolean).join(" ");
+    return {
+      user_id: row.user_id,
+      nickname: row.nickname || fullName || p.email || "Member",
+    };
+  }).sort((a, b) => a.nickname.localeCompare(b.nickname, undefined, { sensitivity: "base" }));
 
   list.innerHTML = currentMembers.map(m => `
-    <li data-member="${m.user_id}" class="${m.user_id === currentUser.id ? "active" : ""}">
+    <li data-member="${m.user_id}">
       ${escapeHtml(m.nickname)}${m.user_id === currentUser.id ? ' <span class="you-tag">(you)</span>' : ""}
     </li>
   `).join("");
 
   document.querySelectorAll("#member-list li").forEach(li => {
-    li.addEventListener("click", () => {
-      document.querySelectorAll("#member-list li").forEach(x => x.classList.remove("active"));
-      li.classList.add("active");
-      loadWishlist(li.dataset.member);
-      closeDrawer();
+    li.addEventListener("click", () => selectMember(li.dataset.member));
+  });
+}
+
+function selectMember(memberUserId) {
+  showWishlistView();
+  loadWishlist(memberUserId);
+}
+
+$("back-to-members").addEventListener("click", showMembersView);
+
+// ---------- Owner-assisted "add someone by name" ----------
+if ($("member-search-btn")) {
+  $("member-search-btn").addEventListener("click", searchMembersByName);
+}
+if ($("member-search-input")) {
+  $("member-search-input").addEventListener("keydown", (e) => { if (e.key === "Enter") searchMembersByName(); });
+}
+
+async function searchMembersByName() {
+  const query = $("member-search-input").value.trim();
+  const resultsList = $("member-search-results");
+  if (!query) { resultsList.innerHTML = ""; return; }
+
+  resultsList.innerHTML = `<li class="empty-state">Searching...</li>`;
+
+  const { data, error } = await sb.rpc("search_profiles_by_name", { query });
+  if (error) {
+    resultsList.innerHTML = `<li class="empty-state">Couldn't search: ${error.message}</li>`;
+    return;
+  }
+
+  const existingIds = new Set(currentMembers.map(m => m.user_id));
+  const results = (data || []).filter(p => !existingIds.has(p.id));
+
+  if (results.length === 0) {
+    resultsList.innerHTML = `<li class="empty-state">No matches.</li>`;
+    return;
+  }
+
+  resultsList.innerHTML = results.map(p => {
+    const fullName = [p.first_name, p.last_name].filter(Boolean).join(" ") || p.email || "Member";
+    return `<li>${escapeHtml(fullName)} <button class="btn btn-ghost btn-small" data-add-id="${p.id}">Add</button></li>`;
+  }).join("");
+
+  resultsList.querySelectorAll("[data-add-id]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const { error: addError } = await sb.rpc("add_group_member_by_id", {
+        target_group_id: currentGroupId,
+        target_user_id: btn.dataset.addId,
+      });
+      if (addError) { alert("Couldn't add: " + addError.message); return; }
+      $("member-search-input").value = "";
+      resultsList.innerHTML = "";
+      await loadMembers();
     });
   });
-
-  const me = currentMembers.find(m => m.user_id === currentUser.id);
-  await loadWishlist(currentUser.id, me ? me.nickname : "You");
 }
 
 async function loadWishlist(memberUserId) {
@@ -350,8 +440,11 @@ async function loadWishlist(memberUserId) {
   $("wishlist-owner-heading").textContent =
     memberUserId === currentUser.id ? "Your wishlist" : `${member ? member.nickname : "Their"}'s wishlist`;
 
+  // Read through wishlist_items_view (not the base table): it quietly
+  // hides purchase status from the item's own owner, so the surprise
+  // stays a surprise, while everyone else can see it.
   const { data, error } = await sb
-    .from("wishlist_items")
+    .from("wishlist_items_view")
     .select("*")
     .eq("group_id", currentGroupId)
     .eq("user_id", memberUserId)
@@ -359,7 +452,6 @@ async function loadWishlist(memberUserId) {
 
   renderItems(memberUserId, error ? [] : (data || []), error);
 }
-
 function renderItems(memberUserId, items, error) {
   const container = $("wishlist-items");
   const isMine = memberUserId === currentUser.id;
@@ -373,15 +465,37 @@ function renderItems(memberUserId, items, error) {
   } else if (items.length === 0) {
     container.innerHTML = `${addButtonHtml}<p class="empty-state">No items yet.</p>`;
   } else {
-    container.innerHTML = addButtonHtml + items.map(item => `
-      <div class="item-tag" data-item-id="${item.id}">
-        <img src="${item.image_url || placeholderImageFor(item.name)}" alt="${escapeHtml(item.name)}" />
-        <h4>${escapeHtml(item.name)}</h4>
-        ${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}
-        ${item.link ? `<a href="${item.link}" target="_blank" rel="noopener">View item &rarr;</a>` : ""}
-        ${isMine ? `<div class="item-actions"><button class="btn btn-ghost btn-small" data-remove-id="${item.id}">Remove</button></div>` : ""}
-      </div>
-    `).join("");
+    container.innerHTML = addButtonHtml + items.map(item => {
+      // Purchase status is only ever shown to people other than the
+      // item's own owner -- wishlist_items_view already nulls these
+      // fields out for the owner, but we gate on isMine too so the
+      // surprise stays hidden even if that ever changes.
+      let purchaseHtml = "";
+      if (!isMine) {
+        if (item.purchased_by) {
+          const isBuyer = item.purchased_by === currentUser.id;
+          const buyerName = [item.purchased_by_first_name, item.purchased_by_last_name].filter(Boolean).join(" ");
+          purchaseHtml = `
+            <div class="item-actions">
+              <span class="bought-tag">&#10003; Bought${isBuyer ? " by you" : (buyerName ? " by " + escapeHtml(buyerName) : "")}</span>
+              ${isBuyer ? `<button class="btn btn-ghost btn-small" data-unmark-id="${item.id}">Undo</button>` : ""}
+            </div>`;
+        } else {
+          purchaseHtml = `<div class="item-actions"><button class="btn btn-gold btn-small" data-mark-id="${item.id}">Mark as bought</button></div>`;
+        }
+      }
+
+      return `
+        <div class="item-tag" data-item-id="${item.id}">
+          <img src="${item.image_url || placeholderImageFor(item.name)}" alt="${escapeHtml(item.name)}" />
+          <h4>${escapeHtml(item.name)}</h4>
+          ${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}
+          ${item.link ? `<a href="${item.link}" target="_blank" rel="noopener">View item &rarr;</a>` : ""}
+          ${isMine ? `<div class="item-actions"><button class="btn btn-ghost btn-small" data-remove-id="${item.id}">Remove</button></div>` : ""}
+          ${purchaseHtml}
+        </div>
+      `;
+    }).join("");
   }
 
   if (isMine) {
@@ -393,6 +507,21 @@ function renderItems(memberUserId, items, error) {
         const { error: delError } = await sb.from("wishlist_items").delete().eq("id", btn.dataset.removeId);
         if (delError) { alert("Couldn't remove item: " + delError.message); return; }
         await loadWishlist(currentUser.id);
+      });
+    });
+  } else {
+    container.querySelectorAll("[data-mark-id]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const { error: markError } = await sb.rpc("mark_item_purchased", { target_item_id: btn.dataset.markId });
+        if (markError) { alert("Couldn't mark as bought: " + markError.message); return; }
+        await loadWishlist(memberUserId);
+      });
+    });
+    container.querySelectorAll("[data-unmark-id]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const { error: unmarkError } = await sb.rpc("unmark_item_purchased", { target_item_id: btn.dataset.unmarkId });
+        if (unmarkError) { alert("Couldn't undo: " + unmarkError.message); return; }
+        await loadWishlist(memberUserId);
       });
     });
   }
@@ -472,7 +601,6 @@ $("ai-chat-send-btn").addEventListener("click", sendAiChatMessage);
 $("ai-chat-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendAiChatMessage();
 });
-
 // ---------- Right-side group menu drawer ----------
 function openDrawer() {
   $("member-drawer").classList.add("open");
@@ -489,15 +617,6 @@ $("drawer-backdrop").addEventListener("click", closeDrawer);
 $("drawer-settings-btn").addEventListener("click", () => {
   closeDrawer();
   openSettingsModal();
-});
-
-$("drawer-add-item-btn").addEventListener("click", () => {
-  closeDrawer();
-  document.querySelectorAll("#member-list li").forEach(x => x.classList.remove("active"));
-  const mine = document.querySelector(`#member-list li[data-member="${currentUser.id}"]`);
-  if (mine) mine.classList.add("active");
-  loadWishlist(currentUser.id);
-  openAddItemModal();
 });
 
 // ---------- Add-to-wishlist modal ----------
@@ -557,7 +676,6 @@ $("add-item-submit").addEventListener("click", async () => {
 });
 $("item-name-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("add-item-submit").click(); });
 $("item-link-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("add-item-submit").click(); });
-
 // ---------- Settings modal ----------
 function skeletonSettingsRows() {
   const rowLabel = (text) => `<h4 style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--evergreen-dark); margin:0 0 8px;">${text}</h4>`;
@@ -632,7 +750,9 @@ function renderSettingsContent() {
 
   if (inGroup) {
     $("nickname-save-btn").addEventListener("click", async () => {
-      const nickname = $("nickname-input").value.trim() || "You";
+      // Leaving this blank clears the override, so the display name
+      // falls back to the member's real first/last name again.
+      const nickname = $("nickname-input").value.trim() || null;
       const { error } = await sb
         .from("group_members")
         .update({ nickname })
