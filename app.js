@@ -29,6 +29,13 @@ function isAdmin() {
   return !!(currentUser && currentUser.email === ADMIN_EMAIL);
 }
 
+// The public half of the VAPID key pair used to sign push notifications.
+// Safe to have here in the open -- like SUPABASE_ANON_KEY in config.js,
+// it's designed to be public; the matching private key lives only in
+// this project's Vercel environment variables, never in the browser.
+const VAPID_PUBLIC_KEY =
+  "BEnBVdOaCCun1iABZxTlL40m4G4r6VhoTtv4l0Ld2AADhhEk7WHKqenaq5xnWuY-eKQgQn2Js0yVC7peSAf0eRk";
+
 // ============================================================
 // Toast notifications -- a small in-app message that matches the rest
 // of the design, used instead of the browser's plain alert() popup for
@@ -143,7 +150,7 @@ applyTheme(localStorage.getItem("wishlist-theme") || "system");
 
 // ---------- Preferences: large text / compact view / confirm-before-remove ----------
 const prefs = Object.assign(
-  { largeText: false, compactView: false, confirmRemove: true },
+  { largeText: false, compactView: false, confirmRemove: true, notifyOnAdd: false },
   JSON.parse(localStorage.getItem("wishlist-prefs") || "{}")
 );
 function applyPrefs() {
@@ -156,6 +163,185 @@ function setPref(key, value) {
   applyPrefs();
 }
 applyPrefs();
+
+// ============================================================
+// Push notifications -- the "Notify me when someone adds an item"
+// switch in Settings. Two moving parts: this browser subscribing (via
+// the Push API + our service worker, sw.js) so it CAN receive a push,
+// and the app telling api/send-item-notification.js to actually send
+// one after an item is added (see the add-item-submit handler below).
+// ============================================================
+
+// The Push API wants the VAPID public key as a raw byte array, not the
+// base64url string it's written down as everywhere else.
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+function pushSupported() {
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+// Registered once, up front, so it's already active by the time someone
+// turns the Settings switch on -- registering is cheap and idempotent
+// (the browser no-ops if sw.js hasn't changed), unlike subscribing,
+// which prompts for permission and should only happen on purpose.
+let swRegistration = null;
+async function registerServiceWorker() {
+  if (!pushSupported()) return null;
+  try {
+    swRegistration = await navigator.serviceWorker.register("/sw.js");
+    return swRegistration;
+  } catch (err) {
+    // iOS Safari outside of an installed, Home-Screen app throws here --
+    // that's expected (see maybeShowIosInstallBanner below), not a bug.
+    return null;
+  }
+}
+registerServiceWorker();
+
+async function getExistingPushSubscription() {
+  if (!pushSupported()) return null;
+  const reg = swRegistration || (await navigator.serviceWorker.getRegistration());
+  if (!reg) return null;
+  return reg.pushManager.getSubscription();
+}
+
+// Turns the switch on: asks permission, subscribes this browser, and
+// saves the subscription so the notify function can find it later.
+// Returns true on success, false if anything stopped it (and reverts
+// the checkbox + explains why via a toast).
+async function enableNotifications(checkboxEl) {
+  if (!pushSupported()) {
+    showToast("Push notifications aren't supported in this browser.", "error");
+    if (checkboxEl) checkboxEl.checked = false;
+    return false;
+  }
+
+  try {
+    const reg = swRegistration || (await registerServiceWorker());
+    if (!reg) {
+      showToast(
+        "Notifications need this site added to your Home Screen first on iPhone (Share → Add to Home Screen), then try again from there.",
+        "error"
+      );
+      if (checkboxEl) checkboxEl.checked = false;
+      return false;
+    }
+
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      showToast("Notifications are blocked -- you can allow them in your browser's site settings.", "error");
+      if (checkboxEl) checkboxEl.checked = false;
+      return false;
+    }
+
+    let subscription = await reg.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+    }
+
+    const keys = subscription.toJSON().keys;
+    const { error } = await sb.from("push_subscriptions").upsert(
+      {
+        user_id: currentUser.id,
+        endpoint: subscription.endpoint,
+        p256dh: keys.p256dh,
+        auth_key: keys.auth,
+      },
+      { onConflict: "endpoint" }
+    );
+    if (error) {
+      showToast("Couldn't save your notification settings: " + error.message, "error");
+      if (checkboxEl) checkboxEl.checked = false;
+      return false;
+    }
+
+    setPref("notifyOnAdd", true);
+    showToast("You'll be notified when someone adds an item.");
+    return true;
+  } catch (err) {
+    showToast("Couldn't turn on notifications: " + err.message, "error");
+    if (checkboxEl) checkboxEl.checked = false;
+    return false;
+  }
+}
+
+// Turns the switch off: unsubscribes this browser and removes the saved
+// subscription. Left quiet on failure (no error toast) -- worst case a
+// stale subscription lingers server-side and gets cleaned up the next
+// time a push to it bounces.
+async function disableNotifications() {
+  setPref("notifyOnAdd", false);
+  try {
+    const subscription = await getExistingPushSubscription();
+    if (subscription) {
+      await sb.from("push_subscriptions").delete().eq("endpoint", subscription.endpoint);
+      await subscription.unsubscribe();
+    }
+  } catch (err) {
+    // Nothing more useful to do here -- the pref is already off, which
+    // is what the person asked for.
+  }
+}
+
+// After someone adds an item, ask the server to notify their groupmates.
+// Fire-and-forget: this never blocks or errors out the add-item flow
+// itself, since the item is already saved by the time this runs.
+async function notifyGroupOfNewItem(groupId, itemName) {
+  try {
+    const { data: sessionData } = await sb.auth.getSession();
+    const token = sessionData && sessionData.session && sessionData.session.access_token;
+    if (!token) return;
+    await fetch("/api/send-item-notification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ group_id: groupId, item_name: itemName }),
+    });
+  } catch (err) {
+    // Best-effort -- the item itself is already added either way.
+  }
+}
+
+// ---------- iPhone "add to Home Screen" nudge ----------
+// On iOS, Safari only allows a website to receive push notifications
+// once it's been added to the Home Screen and is running from there
+// (not from an ordinary browser tab) -- that's an iOS restriction, not
+// something this app can work around. This shows a small one-time tip
+// explaining that, so "why doesn't the notifications switch work on my
+// iPhone" has an answer nearby instead of just silently not working.
+function isIos() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+}
+function isStandalone() {
+  return window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
+}
+function maybeShowIosInstallBanner() {
+  if (!isIos() || isStandalone()) return;
+  if (localStorage.getItem("wishlist-ios-banner-dismissed")) return;
+  if ($("ios-install-banner")) return; // already showing
+
+  const banner = document.createElement("div");
+  banner.id = "ios-install-banner";
+  banner.className = "ios-install-banner";
+  banner.innerHTML = `
+    <span>📱 To get notifications on your iPhone, add Wishlist to your Home Screen first: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</span>
+    <button type="button" aria-label="Dismiss">✕</button>
+  `;
+  banner.querySelector("button").addEventListener("click", () => {
+    localStorage.setItem("wishlist-ios-banner-dismissed", "1");
+    banner.remove();
+  });
+  document.body.appendChild(banner);
+}
 
 // ---------- Screen switching ----------
 function goToScreen(id) {
@@ -386,6 +572,7 @@ async function enterDashboard() {
   } else {
     goToScreen("dashboard-screen");
   }
+  maybeShowIosInstallBanner();
 }
 
 async function loadGroups() {
@@ -989,6 +1176,7 @@ $("add-item-submit").addEventListener("click", async () => {
     closeAddItemModal();
     showToast(`Added "${name}" to your wishlist.`, "success");
     await loadWishlist(currentUser.id);
+    notifyGroupOfNewItem(currentGroupId, name);
   } finally {
     setButtonLoading($("add-item-submit"), false);
   }
@@ -1049,7 +1237,7 @@ function renderSettingsContent() {
     ${switchRow("pref-confirm-remove", "Confirm before removing an item", prefs.confirmRemove)}
 
     ${sectionLabel("Notifications", 18)}
-    ${switchRow("notif-toggle", "Notify me when someone adds an item", true)}
+    ${switchRow("notif-toggle", "Notify me when someone adds an item", prefs.notifyOnAdd)}
 
     ${sectionLabel("Account", 18)}
     <p style="font-size:0.85rem; margin:0 0 10px;">Signed in as <strong>${escapeHtml([currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ") || currentUser.email)}</strong></p>
@@ -1069,6 +1257,15 @@ function renderSettingsContent() {
   $("pref-large-text").addEventListener("change", (e) => setPref("largeText", e.target.checked));
   $("pref-compact-view").addEventListener("change", (e) => setPref("compactView", e.target.checked));
   $("pref-confirm-remove").addEventListener("change", (e) => setPref("confirmRemove", e.target.checked));
+
+  $("notif-toggle").addEventListener("change", async (e) => {
+    const checkbox = e.target;
+    if (checkbox.checked) {
+      await enableNotifications(checkbox);
+    } else {
+      await disableNotifications();
+    }
+  });
 
   if (inGroup) {
     $("nickname-save-btn").addEventListener("click", async () => {
