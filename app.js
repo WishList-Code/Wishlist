@@ -415,6 +415,66 @@ $("back-to-dashboard").addEventListener("click", () => goToScreen("dashboard-scr
 $("ai-fab").addEventListener("click", () => $("ai-panel").classList.toggle("hidden"));
 $("ai-close").addEventListener("click", () => $("ai-panel").classList.add("hidden"));
 
+// ---------- Gift idea assistant (talks to /api/chat, which calls Gemini) ----------
+// Keeps a short in-memory history so the assistant has context, but nothing
+// here is saved anywhere — it resets if the page reloads.
+let aiChatHistory = [];
+
+function addChatMessage(role, text) {
+  const div = document.createElement("div");
+  div.className = `chat-msg ${role === "ai" ? "ai" : "user"}`;
+  div.textContent = text;
+  $("ai-messages").appendChild(div);
+  $("ai-messages").scrollTop = $("ai-messages").scrollHeight;
+  return div;
+}
+
+async function sendAiChatMessage() {
+  const input = $("ai-chat-input");
+  const message = input.value.trim();
+  if (!message) return;
+
+  input.value = "";
+  input.disabled = true;
+  $("ai-chat-send-btn").disabled = true;
+
+  addChatMessage("user", message);
+  const thinkingBubble = addChatMessage("ai", "Thinking...");
+
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, history: aiChatHistory }),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok && data.reply) {
+      thinkingBubble.textContent = data.reply;
+      aiChatHistory.push({ role: "user", content: message });
+      aiChatHistory.push({ role: "ai", content: data.reply });
+      // Keep the history from growing without bound.
+      if (aiChatHistory.length > 20) aiChatHistory = aiChatHistory.slice(-20);
+    } else {
+      thinkingBubble.textContent =
+        data.error ||
+        "Sorry, the gift idea assistant isn't available right now (it needs to be deployed on Vercel with a Gemini API key).";
+    }
+  } catch (err) {
+    thinkingBubble.textContent =
+      "Sorry, I couldn't reach the assistant just now — check your connection and try again.";
+  }
+
+  input.disabled = false;
+  $("ai-chat-send-btn").disabled = false;
+  input.focus();
+}
+
+$("ai-chat-send-btn").addEventListener("click", sendAiChatMessage);
+$("ai-chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendAiChatMessage();
+});
+
 // ---------- Right-side group menu drawer ----------
 function openDrawer() {
   $("member-drawer").classList.add("open");
@@ -616,4 +676,3 @@ function closeSettingsModal() {
 }
 $("settings-close").addEventListener("click", closeSettingsModal);
 $("settings-backdrop").addEventListener("click", closeSettingsModal);
-
