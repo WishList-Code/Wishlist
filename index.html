@@ -6,7 +6,7 @@
 <title>Wishlist — group gift lists for family &amp; friends</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=7" />
+<link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 
@@ -243,6 +243,72 @@
   </div>
 </section>
 
+<!-- ================= SLIDE 5: How it works ================= -->
+<!-- A short, plain-language tour of the app. Shown automatically the
+     first time a browser ever reaches the dashboard (see enterDashboard()
+     in app.js), and reachable anytime after that from the menu. -->
+<section class="screen" id="help-screen">
+  <div class="screen-inner">
+    <header class="top-bar">
+      <div class="brand">
+        <svg class="tag-mark" viewBox="0 0 28 28" width="26" height="26">
+          <path d="M12 3.5 L23 3.5 C23.8 3.5 24.4 3.8 24.9 4.3 L26 5.4 C26.9 6.3 26.9 7.7 26 8.6 L9.5 25.1 C8.6 26 7.2 26 6.3 25.1 L1.9 20.7 C1 19.8 1 18.4 1.9 17.5 L10.4 4.6 C10.7 4 11.3 3.5 12 3.5 Z" fill="var(--gold)" stroke="var(--evergreen-dark)" stroke-width="1.1" stroke-linejoin="round"/>
+          <circle cx="9" cy="9" r="1.6" fill="var(--paper-raised)"/>
+        </svg>
+        <h1>Wishlist</h1>
+      </div>
+      <button class="hamburger-btn" aria-label="Open menu">
+        <span></span><span></span><span></span>
+      </button>
+    </header>
+
+    <div class="section-heading">
+      <div>
+        <button class="btn-text" id="back-to-dashboard-from-help">&larr; All groups</button>
+        <h2>How it works</h2>
+      </div>
+    </div>
+
+    <ul class="help-list">
+      <li>
+        <span class="help-icon">👪</span>
+        <div>
+          <h4>Groups</h4>
+          <p>Create a group for your family or friends, or join one someone already made with their invite code. You can be part of more than one group.</p>
+        </div>
+      </li>
+      <li>
+        <span class="help-icon">🎁</span>
+        <div>
+          <h4>Wishlists</h4>
+          <p>Inside a group, tap someone's name to see their wishlist. On your own list, tap "+ Add item" — paste a store link and we'll try to grab a photo automatically.</p>
+        </div>
+      </li>
+      <li>
+        <span class="help-icon">🤫</span>
+        <div>
+          <h4>It's a surprise</h4>
+          <p>When someone marks an item as bought for you, that stays hidden on your own list — so you won't spoil your own gift. Everyone else can see what's already been bought.</p>
+        </div>
+      </li>
+      <li>
+        <span class="help-icon">✏️</span>
+        <div>
+          <h4>Nicknames &amp; settings</h4>
+          <p>Open the menu (☰) to set a nickname for a group, switch between light, dark, or system theme, or adjust text size and compact view.</p>
+        </div>
+      </li>
+      <li>
+        <span class="help-icon">🔑</span>
+        <div>
+          <h4>Locked out?</h4>
+          <p>There's no self-serve password reset yet — ask whoever manages this Wishlist to reset it for you from the Admin screen.</p>
+        </div>
+      </li>
+    </ul>
+  </div>
+</section>
+
 <!-- ================= Fixed overlay elements (viewport-anchored, not inside any sliding screen) ================= -->
 
 <!-- ---------- Right-side account/menu drawer ---------- -->
@@ -258,7 +324,8 @@
   </div>
 
   <div class="drawer-section">
-    <button class="drawer-settings-btn" id="drawer-settings-btn">⚙️ Settings</button>
+    <button class="drawer-settings-btn" id="drawer-help-btn">❔ How it works</button>
+    <button class="drawer-settings-btn" id="drawer-settings-btn" style="margin-top:8px;">⚙️ Settings</button>
     <button class="drawer-settings-btn hidden" id="drawer-admin-btn" style="margin-top:8px;">🔑 Admin</button>
   </div>
 </aside>
@@ -297,6 +364,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="config.js?v=1"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
