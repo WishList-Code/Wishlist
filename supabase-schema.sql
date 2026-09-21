@@ -51,7 +51,43 @@ create table if not exists public.wishlist_items (
 );
 
 -- ============================================================
--- 3. Row-level security (created AFTER every table above exists)
+-- 3. Helper functions (SECURITY DEFINER, used by policies below)
+-- ============================================================
+--
+-- Several policies below need to know "which groups is the current user
+-- a member of". Querying public.group_members directly from inside a
+-- policy on public.group_members itself (or from a policy on a table
+-- that then queries group_members, which has its own RLS-protected
+-- self-referencing policy) makes Postgres detect a recursive loop and
+-- refuse with "infinite recursion detected in policy for relation
+-- \"group_members\"". Wrapping the lookup in a SECURITY DEFINER function
+-- avoids this: the function runs with its owner's privileges (the table
+-- owner), so the query inside it is not subject to row-level security,
+-- and the loop never happens.
+
+create or replace function public.get_my_group_ids()
+returns setof uuid
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select group_id from public.group_members where user_id = auth.uid();
+$$;
+
+create or replace function public.get_my_groupmate_ids()
+returns setof uuid
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select distinct user_id from public.group_members
+  where group_id in (select group_id from public.group_members where user_id = auth.uid());
+$$;
+
+-- ============================================================
+-- 4. Row-level security (created AFTER every table above exists)
 -- ============================================================
 alter table public.profiles enable row level security;
 alter table public.groups enable row level security;
@@ -62,23 +98,25 @@ create policy "profiles are visible to groupmates"
   on public.profiles for select
   using (
     id = auth.uid()
-    or id in (
-      select gm2.user_id
-      from public.group_members gm1
-      join public.group_members gm2 on gm2.group_id = gm1.group_id
-      where gm1.user_id = auth.uid()
-    )
+    or id in (select public.get_my_groupmate_ids())
   );
 
 create policy "users can update their own profile"
   on public.profiles for update
   using (id = auth.uid());
 
-create policy "members can view their groups"
+-- Any signed-in user can view the groups table (id, name, invite_code,
+-- created_by, created_at). This is intentional, not an oversight: joining
+-- a group works by looking a group up by its invite code before you are
+-- a member of it (the "Have an invite code?" box on the dashboard), so
+-- membership-gated visibility here would make joining impossible. The
+-- invite code itself -- not row-level security on this table -- is what
+-- actually gates who can join a group. The sensitive data (who's in a
+-- group, and what's on their wishlist) stays properly restricted to
+-- members only, in the policies below.
+create policy "authenticated users can view groups"
   on public.groups for select
-  using (
-    id in (select group_id from public.group_members where user_id = auth.uid())
-  );
+  using (auth.uid() is not null);
 
 create policy "any signed-in user can create a group"
   on public.groups for insert
@@ -87,7 +125,7 @@ create policy "any signed-in user can create a group"
 create policy "members can view their groups' membership"
   on public.group_members for select
   using (
-    group_id in (select group_id from public.group_members where user_id = auth.uid())
+    group_id in (select public.get_my_group_ids())
   );
 
 create policy "a user can add themselves to a group (join by invite code)"
@@ -101,14 +139,14 @@ create policy "a user can remove themselves from a group (leave)"
 create policy "members can view items in their groups"
   on public.wishlist_items for select
   using (
-    group_id in (select group_id from public.group_members where user_id = auth.uid())
+    group_id in (select public.get_my_group_ids())
   );
 
 create policy "a member can add items to their own wishlist"
   on public.wishlist_items for insert
   with check (
     user_id = auth.uid()
-    and group_id in (select group_id from public.group_members where user_id = auth.uid())
+    and group_id in (select public.get_my_group_ids())
   );
 
 create policy "a member can edit their own items"
@@ -120,7 +158,7 @@ create policy "a member can delete their own items"
   using (user_id = auth.uid());
 
 -- ============================================================
--- 4. Auto-create a profile row whenever someone signs up
+-- 5. Auto-create a profile row whenever someone signs up
 -- ============================================================
 create or replace function public.handle_new_user()
 returns trigger
@@ -138,4 +176,3 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
-
