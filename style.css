@@ -191,6 +191,15 @@ header.top-bar {
 }
 #hamburger-btn:hover { border-color: var(--evergreen); }
 
+/* On narrow screens the top bar stretches to the same right edge the
+   fixed hamburger button sits on, so its "Log out" button gets hidden
+   underneath the hamburger. Reserve some room for it there. */
+@media (max-width: 700px) {
+  header.top-bar {
+    padding-right: 56px;
+  }
+}
+
 .btn {
   border: none;
   border-radius: 999px;
