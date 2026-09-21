@@ -388,6 +388,36 @@ input:focus, textarea:focus, button:focus-visible {
 }
 .member-search-row input { flex: 1; }
 
+/* ---------- Admin: reset any account's password ---------- */
+.admin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.admin-list li {
+  padding: 10px 12px;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  background: var(--paper-raised);
+}
+.admin-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.admin-reset-form {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--blush);
+}
+.admin-reset-error {
+  font-size: 0.8rem;
+  color: var(--danger);
+  min-height: 1em;
+  margin: 4px 0 0;
+}
+
 #member-search-results li {
   display: flex;
   align-items: center;
