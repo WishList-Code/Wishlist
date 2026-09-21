@@ -29,6 +29,58 @@
   </div>
 </section>
 
+<!-- ================= SLIDE 1b: Auth (sign in / create account) ================= -->
+<section class="screen" id="auth-screen">
+  <div class="screen-inner narrow">
+  <div class="card">
+    <div class="brand" style="justify-content:center; margin-bottom:18px;">
+      <svg class="tag-mark" viewBox="0 0 28 28" width="26" height="26">
+        <path d="M12 3.5 L23 3.5 C23.8 3.5 24.4 3.8 24.9 4.3 L26 5.4 C26.9 6.3 26.9 7.7 26 8.6 L9.5 25.1 C8.6 26 7.2 26 6.3 25.1 L1.9 20.7 C1 19.8 1 18.4 1.9 17.5 L10.4 4.6 C10.7 4 11.3 3.5 12 3.5 Z" fill="var(--gold)" stroke="var(--evergreen-dark)" stroke-width="1.1" stroke-linejoin="round"/>
+        <circle cx="9" cy="9" r="1.6" fill="var(--paper-raised)"/>
+      </svg>
+      <h1 style="margin:0;">Wishlist</h1>
+    </div>
+
+    <div class="auth-tabs" id="auth-tabs">
+      <button type="button" data-auth-tab="signin" class="active">Sign in</button>
+      <button type="button" data-auth-tab="signup">Create account</button>
+    </div>
+
+    <form id="signin-form" class="auth-form">
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="signin-email" required autocomplete="email" />
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="signin-password" required autocomplete="current-password" />
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;">Sign in</button>
+      <button type="button" class="btn-text" id="forgot-password-link" style="display:block; margin:10px auto 0;">Forgot password?</button>
+    </form>
+
+    <form id="signup-form" class="auth-form hidden">
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="signup-email" required autocomplete="email" />
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="signup-password" required minlength="6" autocomplete="new-password" />
+      </div>
+      <div class="field">
+        <label>Confirm password</label>
+        <input type="password" id="signup-password-confirm" required minlength="6" autocomplete="new-password" />
+      </div>
+      <button type="submit" class="btn btn-gold" style="width:100%;">Create account</button>
+    </form>
+
+    <p id="auth-error"></p>
+  </div>
+  <button type="button" class="btn-text" id="auth-back" style="display:block; margin:18px auto 0;">&larr; Back</button>
+  </div>
+</section>
+
 <!-- ================= SLIDE 2: Dashboard ================= -->
 <section class="screen" id="dashboard-screen">
   <div class="screen-inner">
@@ -41,8 +93,8 @@
         <h1>Wishlist</h1>
       </div>
       <div id="user-badge">
-        <span>Sam</span>
-        <button class="btn btn-ghost btn-small">Log out</button>
+        <span class="user-badge-email">Sam</span>
+        <button class="btn btn-ghost btn-small header-logout-btn">Log out</button>
       </div>
     </header>
 
@@ -58,18 +110,7 @@
     </div>
 
     <div class="groups-grid" id="groups-grid">
-      <div class="group-tag" data-group="Smith Family">
-        <h3>Smith Family</h3>
-        <div class="invite-code">Invite code: 7f3a9c2b</div>
-      </div>
-      <div class="group-tag" data-group="College Friends">
-        <h3>College Friends</h3>
-        <div class="invite-code">Invite code: 4d81e0aa</div>
-      </div>
-      <div class="group-tag" data-group="Book Club">
-        <h3>Book Club</h3>
-        <div class="invite-code">Invite code: b2c77f10</div>
-      </div>
+      <!-- filled in by app.js from your real groups -->
     </div>
   </div>
 </section>
@@ -86,8 +127,8 @@
         <h1>Wishlist</h1>
       </div>
       <div id="user-badge">
-        <span>Sam</span>
-        <button class="btn btn-ghost btn-small">Log out</button>
+        <span class="user-badge-email">Sam</span>
+        <button class="btn btn-ghost btn-small header-logout-btn">Log out</button>
       </div>
     </header>
 
@@ -95,7 +136,7 @@
       <div>
         <button class="btn-text" id="back-to-dashboard">&larr; All groups</button>
         <h2 id="group-view-title">Smith Family</h2>
-        <span class="invite-code">Invite code: 7f3a9c2b</span>
+        <span class="invite-code" id="group-invite-code">Invite code: 7f3a9c2b</span>
       </div>
     </div>
 
@@ -162,10 +203,7 @@
     <div class="drawer-section">
       <h4>Members</h4>
       <ul class="member-list" id="member-list">
-        <li class="active" data-member="You">You <span class="you-tag">(you)</span></li>
-        <li data-member="Mom">Mom</li>
-        <li data-member="Dad">Dad (dad-nickname)</li>
-        <li data-member="Jamie">Jamie</li>
+        <!-- filled in by app.js from this group's real members -->
       </ul>
     </div>
   </div>
@@ -203,350 +241,8 @@
   </form>
 </div>
 
-<script>
-// ============================================================
-// UI-only: placeholder data + slide switching between full-screen
-// sections. No real accounts, storage, or AI calls yet.
-// ============================================================
-
-const $ = (id) => document.getElementById(id);
-
-// ---------- Theme: light / dark / system ----------
-function applyTheme(choice) {
-  if (choice === "system") {
-    document.documentElement.removeAttribute("data-theme");
-  } else {
-    document.documentElement.setAttribute("data-theme", choice);
-  }
-  document.querySelectorAll("[data-theme-choice]").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.themeChoice === choice);
-  });
-}
-function setTheme(choice) {
-  localStorage.setItem("wishlist-theme", choice);
-  applyTheme(choice);
-}
-document.querySelectorAll("[data-theme-choice]").forEach(btn => {
-  btn.addEventListener("click", () => setTheme(btn.dataset.themeChoice));
-});
-applyTheme(localStorage.getItem("wishlist-theme") || "system");
-
-// ---------- Preferences: large text / compact view / confirm-before-remove ----------
-const prefs = Object.assign(
-  { largeText: false, compactView: false, confirmRemove: true },
-  JSON.parse(localStorage.getItem("wishlist-prefs") || "{}")
-);
-
-function applyPrefs() {
-  document.documentElement.classList.toggle("large-text", prefs.largeText);
-  document.documentElement.classList.toggle("compact-view", prefs.compactView);
-}
-function setPref(key, value) {
-  prefs[key] = value;
-  localStorage.setItem("wishlist-prefs", JSON.stringify(prefs));
-  applyPrefs();
-}
-applyPrefs();
-
-function goToScreen(id) {
-  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
-  $(id).classList.add("active");
-  // The AI assistant and the group-only drawer sections only make sense inside a group
-  $("ai-fab").classList.toggle("hidden", id !== "group-screen");
-  $("drawer-group-only").classList.toggle("hidden", id !== "group-screen");
-  if (id !== "group-screen") {
-    $("ai-panel").classList.add("hidden");
-    closeDrawer();
-    $("settings-backdrop").classList.add("hidden");
-    $("settings-modal").classList.add("hidden");
-    $("add-item-backdrop").classList.add("hidden");
-    $("add-item-modal").classList.add("hidden");
-  }
-}
-
-function enterDashboard() {
-  goToScreen("dashboard-screen");
-  const grid = $("groups-grid");
-  const realGroupsHtml = grid.innerHTML;
-  grid.innerHTML = skeletonGroupCards(3);
-  setTimeout(() => { grid.innerHTML = realGroupsHtml; attachGroupCardHandlers(); }, 450);
-}
-
-$("start-signin").addEventListener("click", enterDashboard);
-$("start-create").addEventListener("click", enterDashboard);
-$("start-skip").addEventListener("click", enterDashboard);
-$("back-to-dashboard").addEventListener("click", () => goToScreen("dashboard-screen"));
-
-function attachGroupCardHandlers() {
-  document.querySelectorAll(".group-tag").forEach(card => {
-    card.addEventListener("click", () => {
-      $("group-view-title").textContent = card.dataset.group;
-      goToScreen("group-screen");
-      loadWishlist("You");
-    });
-  });
-}
-attachGroupCardHandlers();
-
-// ---------- Skeleton loaders ----------
-function skeletonItemCards(count) {
-  return Array.from({ length: count }).map(() => `
-    <div class="skeleton-card">
-      <div class="skeleton-block thumb"></div>
-      <div class="skeleton-block line"></div>
-      <div class="skeleton-block line short"></div>
-      <div class="skeleton-block line tiny"></div>
-    </div>
-  `).join("");
-}
-
-function skeletonGroupCards(count) {
-  return Array.from({ length: count }).map(() => `
-    <div class="skeleton-group">
-      <div class="skeleton-block line"></div>
-      <div class="skeleton-block line tiny"></div>
-    </div>
-  `).join("");
-}
-
-// Shows a brief skeleton state before rendering the real wishlist,
-// mimicking what a real network fetch would feel like.
-function loadWishlist(member) {
-  $("wishlist-items").innerHTML = skeletonItemCards(2);
-  setTimeout(() => renderItems(member), 450);
-}
-
-// Fake per-group, per-member wishlist data just to preview the look
-const demoItems = {
-  You: [
-    { name: "Noise-cancelling headphones", description: "Over-ear, wireless, good for flights.", image: "https://placehold.co/300x300/D3EBFA/2F4A3D?text=%F0%9F%8E%A7", link: "#" },
-    { name: "French press", description: "The 34oz stainless steel one.", image: "https://placehold.co/300x300/D3EBFA/2F4A3D?text=%E2%98%95", link: "#" }
-  ],
-  Mom: [
-    { name: "Gardening gloves", description: "Medium, leather palm.", image: "https://placehold.co/300x300/D3EBFA/2F4A3D?text=%F0%9F%A7%A4", link: "#" }
-  ],
-  Dad: [
-    { name: "Cast iron skillet", description: "12 inch, pre-seasoned.", image: "https://placehold.co/300x300/D3EBFA/2F4A3D?text=%F0%9F%8D%B3", link: "#" },
-    { name: "Bluetooth speaker", description: "", image: "https://placehold.co/300x300/D3EBFA/2F4A3D?text=%F0%9F%94%8A", link: "#" }
-  ],
-  Jamie: []
-};
-
-function renderItems(member) {
-  const container = $("wishlist-items");
-  const items = demoItems[member] || [];
-  $("wishlist-owner-heading").textContent = member === "You" ? "Your wishlist" : `${member}'s wishlist`;
-
-  const addButtonHtml = member === "You"
-    ? `<button class="btn btn-primary btn-small" id="inline-add-item-btn" style="margin-bottom:14px;">+ Add item</button>`
-    : "";
-
-  if (items.length === 0) {
-    container.innerHTML = `${addButtonHtml}<p class="empty-state">No items yet.</p>`;
-  } else {
-    container.innerHTML = addButtonHtml + items.map((item, i) => `
-      <div class="item-tag">
-        <img src="${item.image}" alt="${item.name}" />
-        <h4>${item.name}</h4>
-        ${item.description ? `<p>${item.description}</p>` : ""}
-        <a href="${item.link}">View item &rarr;</a>
-        ${member === "You" ? `<div class="item-actions"><button class="btn btn-ghost btn-small" data-remove-index="${i}">Remove</button></div>` : ""}
-      </div>
-    `).join("");
-  }
-
-  if (member === "You") {
-    $("inline-add-item-btn").addEventListener("click", openAddItemModal);
-    container.querySelectorAll("[data-remove-index]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        if (prefs.confirmRemove && !confirm("Remove this item from your wishlist?")) return;
-        demoItems.You.splice(Number(btn.dataset.removeIndex), 1);
-        renderItems("You");
-      });
-    });
-  }
-}
-
-document.querySelectorAll("#member-list li").forEach(li => {
-  li.addEventListener("click", () => {
-    document.querySelectorAll("#member-list li").forEach(x => x.classList.remove("active"));
-    li.classList.add("active");
-    loadWishlist(li.dataset.member);
-    closeDrawer();
-  });
-});
-
-$("ai-fab").addEventListener("click", () => $("ai-panel").classList.toggle("hidden"));
-$("ai-close").addEventListener("click", () => $("ai-panel").classList.add("hidden"));
-
-// ---------- Right-side group menu drawer ----------
-function openDrawer() {
-  $("member-drawer").classList.add("open");
-  $("drawer-backdrop").classList.remove("hidden");
-}
-function closeDrawer() {
-  $("member-drawer").classList.remove("open");
-  $("drawer-backdrop").classList.add("hidden");
-}
-$("hamburger-btn").addEventListener("click", openDrawer);
-$("drawer-close").addEventListener("click", closeDrawer);
-$("drawer-backdrop").addEventListener("click", closeDrawer);
-
-$("drawer-settings-btn").addEventListener("click", () => {
-  closeDrawer();
-  openSettingsModal();
-});
-
-$("drawer-add-item-btn").addEventListener("click", () => {
-  closeDrawer();
-  // switch to your own wishlist in the background, then open the modal on top
-  document.querySelectorAll("#member-list li").forEach(x => x.classList.remove("active"));
-  document.querySelector('#member-list li[data-member="You"]').classList.add("active");
-  renderItems("You");
-  openAddItemModal();
-});
-
-// ---------- Add-to-wishlist modal ----------
-function openAddItemModal() {
-  $("add-item-backdrop").classList.remove("hidden");
-  $("add-item-modal").classList.remove("hidden");
-  $("item-name-input").focus();
-}
-function closeAddItemModal() {
-  $("add-item-backdrop").classList.add("hidden");
-  $("add-item-modal").classList.add("hidden");
-}
-$("add-item-close").addEventListener("click", closeAddItemModal);
-$("add-item-backdrop").addEventListener("click", closeAddItemModal);
-$("add-item-submit").addEventListener("click", () => {
-  const name = $("item-name-input").value.trim();
-  const link = $("item-link-input").value.trim();
-  if (!name) {
-    $("item-name-input").focus();
-    return;
-  }
-
-  // UI-only demo: add straight into the fake data so it shows up right away.
-  // (Once Supabase is wired in, this becomes a real insert + a link-fetch call.)
-  demoItems.You.unshift({
-    name,
-    description: link ? "Added just now — details would be auto-fetched from the link." : "",
-    image: `https://placehold.co/300x300/D3EBFA/2F4A3D?text=${encodeURIComponent(name.slice(0, 2).toUpperCase())}`,
-    link: link || "#"
-  });
-
-  $("item-name-input").value = "";
-  $("item-link-input").value = "";
-  closeAddItemModal();
-  renderItems("You");
-});
-$("item-name-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("add-item-submit").click(); });
-$("item-link-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("add-item-submit").click(); });
-
-// ---------- Settings modal ----------
-function skeletonSettingsRows() {
-  const rowLabel = (text) => `<h4 style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--evergreen-dark); margin:0 0 8px;">${text}</h4>`;
-  return `
-    ${rowLabel("Theme")}
-    <div class="skeleton-block line" style="height:38px; margin-bottom:18px;"></div>
-    ${rowLabel("Your nickname in this group")}
-    <div class="skeleton-block line" style="height:38px; margin-bottom:18px;"></div>
-    ${rowLabel("Preferences")}
-    <div class="skeleton-block line" style="height:38px; margin-bottom:8px;"></div>
-    <div class="skeleton-block line" style="height:38px; margin-bottom:8px;"></div>
-    <div class="skeleton-block line" style="height:38px; margin-bottom:18px;"></div>
-    ${rowLabel("Notifications")}
-    <div class="skeleton-block line" style="height:38px; margin-bottom:18px;"></div>
-    ${rowLabel("Account")}
-    <div class="skeleton-block line" style="height:38px; margin-bottom:8px;"></div>
-    <div class="skeleton-block line" style="height:38px;"></div>
-  `;
-}
-
-function renderSettingsContent() {
-  const sectionLabel = (text, marginTop) => `<h4 style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--evergreen-dark); margin:${marginTop || 0}px 0 8px;">${text}</h4>`;
-  const switchRow = (id, label, checked) => `
-    <label class="settings-switch-row" style="margin-bottom:8px;">
-      <span>${label}</span>
-      <input type="checkbox" id="${id}" ${checked ? "checked" : ""} />
-      <span class="switch-track"><span class="switch-thumb"></span></span>
-    </label>`;
-
-  $("settings-modal-body").innerHTML = `
-    ${sectionLabel("Theme")}
-    <div class="theme-toggle" id="theme-toggle-modal">
-      <button data-theme-choice="light">☀️ Light</button>
-      <button data-theme-choice="dark">🌙 Dark</button>
-      <button data-theme-choice="system">🖥️ System</button>
-    </div>
-
-    ${sectionLabel("Your nickname in this group", 18)}
-    <div class="nickname-editor">
-      <input type="text" placeholder="Nickname in this group" />
-      <button class="btn btn-ghost btn-small">Save</button>
-    </div>
-
-    ${sectionLabel("Preferences", 18)}
-    ${switchRow("pref-large-text", "Larger text", prefs.largeText)}
-    ${switchRow("pref-compact-view", "Compact wishlist cards", prefs.compactView)}
-    ${switchRow("pref-confirm-remove", "Confirm before removing an item", prefs.confirmRemove)}
-
-    ${sectionLabel("Notifications", 18)}
-    ${switchRow("notif-toggle", "Notify me when someone adds an item", true)}
-
-    ${sectionLabel("Account", 18)}
-    <button class="btn btn-ghost btn-small" style="width:100%; margin-bottom:8px;" id="settings-logout-btn">Log out</button>
-    <button class="btn btn-ghost btn-small" style="width:100%; color:var(--danger); border-color:var(--danger);" id="settings-leave-group-btn">Leave this group</button>
-
-    ${sectionLabel("Data", 18)}
-    <button class="btn btn-ghost btn-small" style="width:100%;" id="settings-reset-btn">Reset demo data</button>
-
-    <p style="text-align:center; font-size:0.75rem; color:var(--evergreen-dark); margin:18px 0 0;">Wishlist · UI prototype v0.2</p>
-  `;
-
-  // wire up the newly-created theme buttons and sync the active state
-  document.querySelectorAll('#theme-toggle-modal [data-theme-choice]').forEach(btn => {
-    btn.addEventListener("click", () => setTheme(btn.dataset.themeChoice));
-  });
-  applyTheme(localStorage.getItem("wishlist-theme") || "system");
-
-  // Preferences — real, working toggles
-  $("pref-large-text").addEventListener("change", (e) => setPref("largeText", e.target.checked));
-  $("pref-compact-view").addEventListener("change", (e) => setPref("compactView", e.target.checked));
-  $("pref-confirm-remove").addEventListener("change", (e) => setPref("confirmRemove", e.target.checked));
-
-  // UI-only demo stubs — no real account/session logic yet
-  $("settings-logout-btn").addEventListener("click", () => {
-    closeSettingsModal();
-    goToScreen("start-screen");
-  });
-  $("settings-leave-group-btn").addEventListener("click", () => {
-    closeSettingsModal();
-    goToScreen("dashboard-screen");
-  });
-  $("settings-reset-btn").addEventListener("click", () => {
-    if (confirm("Reset all demo data and preferences? This clears your saved theme, preferences, and any items you've added in this session.")) {
-      localStorage.removeItem("wishlist-theme");
-      localStorage.removeItem("wishlist-prefs");
-      location.reload();
-    }
-  });
-}
-
-function openSettingsModal() {
-  $("settings-backdrop").classList.remove("hidden");
-  $("settings-modal").classList.remove("hidden");
-  $("settings-modal-body").innerHTML = skeletonSettingsRows();
-  setTimeout(renderSettingsContent, 450);
-}
-function closeSettingsModal() {
-  $("settings-backdrop").classList.add("hidden");
-  $("settings-modal").classList.add("hidden");
-}
-$("settings-close").addEventListener("click", closeSettingsModal);
-$("settings-backdrop").addEventListener("click", closeSettingsModal);
-
-renderItems("You");
-</script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="config.js?v=1"></script>
+<script src="app.js?v=1"></script>
 </body>
 </html>
