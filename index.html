@@ -4,9 +4,20 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Wishlist — group gift lists for family &amp; friends</title>
+<meta name="description" content="A private wishlist app for family and friends. Create a group, share the invite code, and see what everyone wants — without spoiling your own surprises." />
+<meta name="theme-color" content="#2F4A3D" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#0F1720" media="(prefers-color-scheme: dark)" />
+<meta property="og:title" content="Wishlist — group gift lists for family &amp; friends" />
+<meta property="og:description" content="A private wishlist app for family and friends. Create a group, share the invite code, and see what everyone wants — without spoiling your own surprises." />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://wishlist-wine-kappa.vercel.app/" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Wishlist — group gift lists for family &amp; friends" />
+<meta name="twitter:description" content="A private wishlist app for family and friends. Create a group, share the invite code, and see what everyone wants — without spoiling your own surprises." />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyOCAyOCI+CjxyZWN0IHdpZHRoPSIyOCIgaGVpZ2h0PSIyOCIgcng9IjciIGZpbGw9IiMyRjRBM0QiLz4KPHBhdGggZD0iTTEyIDMuNSBMMjMgMy41IEMyMy44IDMuNSAyNC40IDMuOCAyNC45IDQuMyBMMjYgNS40IEMyNi45IDYuMyAyNi45IDcuNyAyNiA4LjYgTDkuNSAyNS4xIEM4LjYgMjYgNy4yIDI2IDYuMyAyNS4xIEwxLjkgMjAuNyBDMSAxOS44IDEgMTguNCAxLjkgMTcuNSBMMTAuNCA0LjYgQzEwLjcgNCAxMS4zIDMuNSAxMiAzLjUgWiIgZmlsbD0iI0M5OUEzQiIgc3Ryb2tlPSIjMUIyNDIwIiBzdHJva2Utd2lkdGg9IjEuMSIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8Y2lyY2xlIGN4PSI5IiBjeT0iOSIgcj0iMS42IiBmaWxsPSIjRkZGRkZGIi8+Cjwvc3ZnPgo=" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=8" />
+<link rel="stylesheet" href="style.css?v=9" />
 </head>
 <body>
 
@@ -81,7 +92,7 @@
       <button type="submit" class="btn btn-gold" style="width:100%;">Create account</button>
     </form>
 
-    <p id="auth-error"></p>
+    <p id="auth-error" aria-live="polite"></p>
   </div>
   <button type="button" class="btn-text" id="auth-back" style="display:block; margin:18px auto 0;">&larr; Back</button>
   </div>
@@ -115,7 +126,7 @@
         </div>
         <button type="submit" class="btn btn-primary" style="width:100%;">Continue</button>
       </form>
-      <p id="complete-profile-error"></p>
+      <p id="complete-profile-error" aria-live="polite"></p>
     </div>
     <button type="button" class="btn-text" id="complete-profile-logout" style="display:block; margin:18px auto 0;">Log out instead</button>
   </div>
@@ -332,10 +343,10 @@
 
 <!-- ---------- Settings modal (overlay on top of everything) ---------- -->
 <div id="settings-backdrop" class="hidden"></div>
-<div id="settings-modal" class="hidden">
+<div id="settings-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
   <div class="modal-header">
-    <h3>Settings</h3>
-    <button class="btn-text" id="settings-close">✕</button>
+    <h3 id="settings-modal-title">Settings</h3>
+    <button class="btn-text" id="settings-close" aria-label="Close settings">✕</button>
   </div>
   <div id="settings-modal-body">
     <!-- filled in by JS: skeleton first, then real controls -->
@@ -344,10 +355,10 @@
 
 <!-- ---------- Add-to-wishlist modal (overlay on top of everything) ---------- -->
 <div id="add-item-backdrop" class="hidden"></div>
-<div id="add-item-modal" class="hidden">
+<div id="add-item-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="add-item-modal-title">
   <div class="modal-header">
-    <h3>Add to your wishlist</h3>
-    <button class="btn-text" id="add-item-close">✕</button>
+    <h3 id="add-item-modal-title">Add to your wishlist</h3>
+    <button class="btn-text" id="add-item-close" aria-label="Close">✕</button>
   </div>
   <form id="add-item-form">
     <div class="field">
@@ -362,8 +373,21 @@
   </form>
 </div>
 
+<!-- ---------- Confirm dialog (replaces the browser's plain confirm() popup) ---------- -->
+<div id="confirm-backdrop" class="hidden"></div>
+<div id="confirm-modal" class="hidden" role="alertdialog" aria-modal="true" aria-labelledby="confirm-modal-message">
+  <p id="confirm-modal-message" style="margin:0 0 18px;"></p>
+  <div style="display:flex; gap:8px;">
+    <button type="button" class="btn btn-ghost btn-small" style="flex:1;" id="confirm-modal-cancel">Cancel</button>
+    <button type="button" class="btn btn-primary btn-small" style="flex:1;" id="confirm-modal-confirm">Confirm</button>
+  </div>
+</div>
+
+<!-- ---------- Toast notifications (replaces the browser's plain alert() popup) ---------- -->
+<div id="toast-container" aria-live="polite" aria-atomic="true"></div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="config.js?v=1"></script>
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>
