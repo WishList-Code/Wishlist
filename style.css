@@ -120,7 +120,7 @@ html.compact-view .item-tag p {
   width: 100%;
   max-width: 960px;
   align-self: flex-start;
-  margin: auto 0;
+  margin: 0;
 }
 .screen-inner.narrow {
   max-width: 380px;
