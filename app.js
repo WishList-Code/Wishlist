@@ -151,6 +151,55 @@ $("forgot-password-link").addEventListener("click", async () => {
   $("auth-error").textContent = error ? error.message : "Password reset email sent.";
 });
 
+// ---------- Password reset (the other end of "Forgot password?") ----------
+// Clicking the link in that email brings someone back here with a
+// recovery token in the URL. Supabase's client picks that up on load,
+// signs them into a temporary recovery session, and fires this event --
+// that's the signal to show the "set a new password" screen instead of
+// wherever the normal sign-in flow below would otherwise send them.
+let inPasswordRecovery = false;
+sb.auth.onAuthStateChange((event, session) => {
+  if (event === "PASSWORD_RECOVERY" && session && session.user) {
+    inPasswordRecovery = true;
+    currentUser = { id: session.user.id, email: session.user.email };
+    showResetPasswordScreen();
+  }
+});
+
+function showResetPasswordScreen() {
+  $("reset-password-error").textContent = "";
+  $("reset-password-new").value = "";
+  $("reset-password-confirm").value = "";
+  goToScreen("reset-password-screen");
+}
+
+$("reset-password-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const newPassword = $("reset-password-new").value;
+  const confirm = $("reset-password-confirm").value;
+  $("reset-password-error").textContent = "";
+  if (newPassword.length < 6) {
+    $("reset-password-error").textContent = "Password must be at least 6 characters.";
+    return;
+  }
+  if (newPassword !== confirm) {
+    $("reset-password-error").textContent = "Passwords don't match.";
+    return;
+  }
+  const { error } = await sb.auth.updateUser({ password: newPassword });
+  if (error) {
+    $("reset-password-error").textContent = "Couldn't update password: " + error.message;
+    return;
+  }
+  inPasswordRecovery = false;
+  await loadCurrentUserProfile();
+  if (!hasCompleteProfile()) {
+    showCompleteProfileScreen();
+    return;
+  }
+  await enterDashboard();
+});
+
 // Shows the signed-in account's name in the drawer (this replaced the
 // old header name+"Log out" badge -- the drawer is now the one place
 // that shows who you're signed in as).
@@ -199,8 +248,11 @@ async function onSignedIn(user) {
 // Resume an existing session on page load (so people don't have to
 // sign in again every visit), otherwise stay on the start screen.
 (async () => {
+  // A password-recovery link is handled by the onAuthStateChange listener
+  // above instead -- don't race it into the normal dashboard.
+  if (window.location.hash.includes("type=recovery")) return;
   const { data } = await sb.auth.getSession();
-  if (data.session && data.session.user) {
+  if (data.session && data.session.user && !inPasswordRecovery) {
     currentUser = { id: data.session.user.id, email: data.session.user.email };
     await loadCurrentUserProfile();
     if (!hasCompleteProfile()) {
