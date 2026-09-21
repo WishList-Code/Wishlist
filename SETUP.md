@@ -19,9 +19,14 @@ so the surprise stays a surprise right up until it's opened.
   publishable key. Safe to be public in the repo (see the comments in the
   file) since real access control is enforced by the row-level security
   policies in `supabase-schema.sql`, not by keeping this key secret.
-- **`api/scrape.js`, `api/chat.js`** — small serverless functions. These
-  can't run on GitHub Pages (it only serves static files) — they need
-  **Vercel**, which is why the site is deployed there too.
+- **`api/scrape.js`** — a small serverless function that fetches a
+  product link's photo/description for the "Add item" form. Can't run on
+  GitHub Pages (it only serves static files) — needs **Vercel**, which is
+  why the site is deployed there too.
+- **`api/delete-account.js`** — a small serverless function that deletes
+  an account when someone uses "Delete account" in Settings. Needs
+  Vercel for the same reason, and needs its own environment variable
+  (see the Vercel setup section below).
 - **`assets/logo.png`** — a spare logo/photo asset. Not currently
   referenced by the site (the header logo mark is drawn as inline SVG),
   kept here for future use.
@@ -30,12 +35,12 @@ so the surprise stays a surprise right up until it's opened.
 
 - **GitHub repo:** `WishList-Code/Wishlist`
 - **Static site (GitHub Pages):** `https://wishlist-code.github.io/Wishlist/`
-  — good for quickly checking the UI, but the AI assistant and the
-  link-preview scraper won't work here (no serverless functions).
+  — good for quickly checking the UI, but the link-preview scraper and
+  account deletion won't work here (no serverless functions).
 - **Full site with working API routes (Vercel):** `https://wishlist-wine-kappa.vercel.app`
   — this is the one to actually use day-to-day, since it's the only place
-  both `/api/scrape` and `/api/chat` work. Connected to the same GitHub
-  repo, so every push to `main` auto-deploys here too.
+  `/api/scrape` and `/api/delete-account` work. Connected to the same
+  GitHub repo, so every push to `main` auto-deploys here too.
 - **Database (Supabase):** project "Heavenly View Wishlist", org "Star
   INC.", project ref `fobobmhfuevqdgvvyxxm`.
 
@@ -72,18 +77,23 @@ The `api/` folder only runs on Vercel, not on GitHub Pages.
 2. No build settings are needed — it's a static site with serverless
    functions, so the defaults work (Framework Preset "Other", no build
    command).
-3. Add an environment variable:
-   - **Name:** `GEMINI_API_KEY`
-   - **Value:** a Google Gemini API key (get one at
-     [aistudio.google.com/apikey](https://aistudio.google.com/apikey))
-   - This is what lets `api/chat.js` (the gift-idea assistant) work. It's
-     never used client-side, so it's safe to store as a normal (not
-     client-exposed) env var.
-4. Deploy. Every push to `main` on GitHub auto-redeploys.
+3. Add an environment variable for account deletion:
+   - **Name:** `SUPABASE_SERVICE_ROLE_KEY`
+   - **Value:** the project's **service_role** secret key, from
+     Supabase's **Project Settings → API Keys** (a different key from
+     the publishable one in `config.js` — this one must never be public,
+     which is exactly why it lives here as a Vercel env var instead of
+     in the repo).
+   - This is what lets `api/delete-account.js` actually delete an
+     account: deleting your own Supabase account isn't something the
+     browser can do with just the publishable key. Until this is set,
+     the "Delete account" button in Settings will show an error instead
+     of deleting anything — nothing else is affected.
+4. Deploy. Every push to `main` auto-redeploys.
 5. To sanity-check the deploy, POST to `/api/scrape` with
-   `{"url": "https://example.com"}` and to `/api/chat` with
-   `{"message": "my mom loves gardening"}` — neither should 404, and
-   `/api/chat` should come back with a real `{"reply": "..."}`.
+   `{"url": "https://example.com"}` — it shouldn't 404, and should come
+   back with at least a `title`.
+
 ## Feature notes
 
 - **Named accounts.** Sign-up collects a first and last name alongside
@@ -114,6 +124,30 @@ The `api/` folder only runs on Vercel, not on GitHub Pages.
   people already in one of the owner's groups (you have to be able to
   find someone *before* they share a group with you), but only the
   actual owner of a given group can add someone to it this way.
+- **Cleaner phone layout: everything account-related lives behind the
+  hamburger.** The header used to show your name and a "Log out" button
+  directly, next to a separate fixed hamburger icon pinned to the top of
+  the screen. Now the hamburger sits inline in the header itself (in the
+  spot the name used to be), which also removes the empty reserved space
+  that used to sit above the page for that fixed icon. Opening the menu
+  shows your name, and "⚙️ Settings" from there has your account
+  controls: log out, leave a group (when you're in one), and delete your
+  account.
+- **Delete account, with a two-step confirmation.** In Settings, "Delete
+  account" first asks you to confirm ("Yes, delete my account") before
+  anything happens — there's no way to delete an account with a single
+  tap. Deleting cascades through the database on its own: your wishlist
+  items and your membership in every group go with it. Any group you
+  created stays for its other members (see "Known gaps" below for what
+  that means for "add by name" in that group). Needs the
+  `SUPABASE_SERVICE_ROLE_KEY` environment variable above to work at all.
+- **Everyone has to have a name on file.** Right after signing in, an
+  account missing a first/last name (an older account from before named
+  accounts existed, or one a group owner added by name, which doesn't
+  collect a password or a name for the person being added) is asked to
+  fill that in before it can do anything else. This is a one-time,
+  one-screen check on sign-in, not tied to any particular feature, so
+  the same gate would catch any future required field the same way.
 
 ## Known gaps / things to revisit
 
@@ -122,10 +156,11 @@ The `api/` folder only runs on Vercel, not on GitHub Pages.
   safe to leave out.
 - Email/password is the only sign-in method right now (no magic links, no
   social sign-in) — intentional, to keep the first version simple.
-- The Gemini model used in `api/chat.js` is `gemini-3.6-flash`. If Google
-  deprecates it later, the error message from the API will name the
-  replacement model to switch to.
-- Accounts created before the named-accounts change have no first/last
-  name on file, so they display by nickname or email until they update
-  their profile (there's currently no in-app "edit your name" screen for
-  an existing account, only at sign-up).
+- If the owner of a group deletes their own account, that group's
+  `created_by` clears (the group and its other members are unaffected),
+  but nobody can use "add by name" for that group anymore, since that
+  only ever worked for whoever the current owner is. The invite code
+  still works for that group either way.
+- If someone deletes their account after marking someone else's item as
+  bought, the item stays marked bought (so nobody accidentally buys a
+  duplicate) but no longer shows whose name bought it.
