@@ -29,6 +29,98 @@ function isAdmin() {
   return !!(currentUser && currentUser.email === ADMIN_EMAIL);
 }
 
+// ============================================================
+// Toast notifications -- a small in-app message that matches the rest
+// of the design, used instead of the browser's plain alert() popup for
+// errors and confirmations. Lives in a fixed, always-present container
+// (see index.html) so it works no matter which screen/modal is open.
+// ============================================================
+function showToast(message, type) {
+  const container = $("toast-container");
+  if (!container) return;
+  const el = document.createElement("div");
+  el.className = "toast" + (type ? " toast-" + type : "");
+  el.setAttribute("role", type === "error" ? "alert" : "status");
+  el.textContent = message;
+  container.appendChild(el);
+  // Two rAFs so the browser commits the initial (pre-.show) state before
+  // the class flips -- otherwise the transition sometimes gets skipped
+  // and the toast just appears instantly instead of sliding/fading in.
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("show")));
+  const remove = () => el.remove();
+  setTimeout(() => {
+    el.classList.remove("show");
+    el.addEventListener("transitionend", remove, { once: true });
+    setTimeout(remove, 400); // fallback in case the transition never fires (e.g. reduced-motion)
+  }, 3800);
+}
+
+// ============================================================
+// Confirm dialog -- a small modal that matches the rest of the design,
+// used instead of the browser's plain confirm() popup for anything
+// destructive (removing an item, leaving a group). Returns a Promise
+// that resolves true/false, so call sites read almost the same as the
+// old `if (!confirm(...)) return;` pattern, just with an `await`.
+// ============================================================
+let confirmResolve = null;
+function confirmAction(message, opts) {
+  opts = opts || {};
+  $("confirm-modal-message").textContent = message;
+  const confirmBtn = $("confirm-modal-confirm");
+  confirmBtn.textContent = opts.confirmLabel || "Confirm";
+  confirmBtn.className = "btn btn-small" + (opts.danger ? "" : " btn-primary");
+  confirmBtn.style.background = opts.danger ? "var(--danger)" : "";
+  confirmBtn.style.color = opts.danger ? "#fff" : "";
+  $("confirm-backdrop").classList.remove("hidden");
+  $("confirm-modal").classList.remove("hidden");
+  // Default focus goes to Cancel, not the (often destructive) confirm
+  // button -- so an accidental Enter/tap doesn't confirm something like
+  // "remove this item" or "leave this group".
+  $("confirm-modal-cancel").focus();
+  return new Promise((resolve) => { confirmResolve = resolve; });
+}
+function closeConfirmModal(result) {
+  $("confirm-backdrop").classList.add("hidden");
+  $("confirm-modal").classList.add("hidden");
+  if (confirmResolve) {
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    resolve(result);
+  }
+}
+$("confirm-modal-cancel").addEventListener("click", () => closeConfirmModal(false));
+$("confirm-modal-confirm").addEventListener("click", () => closeConfirmModal(true));
+$("confirm-backdrop").addEventListener("click", () => closeConfirmModal(false));
+
+// ============================================================
+// Button loading states -- disables a button and swaps in a small
+// spinner while an async action runs, so a slow connection reads as
+// "working" instead of "did my tap register at all?" (especially on
+// phones, where this app mostly gets used).
+// ============================================================
+function setButtonLoading(btn, loading, loadingText) {
+  if (!btn) return;
+  if (loading) {
+    if (btn.dataset.originalHtml === undefined) btn.dataset.originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.setAttribute("aria-busy", "true");
+    btn.innerHTML = `<span class="spinner"></span>${loadingText ? " " + escapeHtml(loadingText) : ""}`;
+  } else {
+    btn.disabled = false;
+    btn.removeAttribute("aria-busy");
+    if (btn.dataset.originalHtml !== undefined) {
+      btn.innerHTML = btn.dataset.originalHtml;
+      delete btn.dataset.originalHtml;
+    }
+  }
+}
+// A form's submit event carries the button that was actually pressed
+// (e.submitter) in every current browser; this just falls back to the
+// form's own submit button for anything that somehow doesn't set it.
+function submitButtonFor(e) {
+  return e.submitter || e.target.querySelector('button[type="submit"]');
+}
+
 // ---------- Theme: light / dark / system ----------
 function applyTheme(choice) {
   if (choice === "system") {
@@ -81,6 +173,18 @@ function goToScreen(id) {
   }
 }
 
+// ---------- Escape key: close whatever overlay is currently open ----------
+// Checked in front-to-back (topmost-first) order, since more than one
+// can technically be open at once (e.g. the confirm dialog on top of
+// settings) and Escape should only close the one on top.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("confirm-modal").classList.contains("hidden")) { closeConfirmModal(false); return; }
+  if (!$("add-item-modal").classList.contains("hidden")) { closeAddItemModal(); return; }
+  if (!$("settings-modal").classList.contains("hidden")) { closeSettingsModal(); return; }
+  if ($("member-drawer").classList.contains("open")) { closeDrawer(); return; }
+});
+
 // ============================================================
 // Auth screen (sign in / create account)
 // ============================================================
@@ -106,19 +210,26 @@ $("auth-back").addEventListener("click", () => goToScreen("start-screen"));
 
 $("signin-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const btn = submitButtonFor(e);
   const email = $("signin-email").value.trim();
   const password = $("signin-password").value;
   $("auth-error").textContent = "";
-  const { data, error } = await sb.auth.signInWithPassword({ email, password });
-  if (error) {
-    $("auth-error").textContent = error.message;
-    return;
+  setButtonLoading(btn, true, "Signing in…");
+  try {
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) {
+      $("auth-error").textContent = error.message;
+      return;
+    }
+    await onSignedIn(data.user);
+  } finally {
+    setButtonLoading(btn, false);
   }
-  await onSignedIn(data.user);
 });
 
 $("signup-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const btn = submitButtonFor(e);
   const firstName = $("signup-first-name").value.trim();
   const lastName = $("signup-last-name").value.trim();
   const email = $("signup-email").value.trim();
@@ -133,23 +244,28 @@ $("signup-form").addEventListener("submit", async (e) => {
     $("auth-error").textContent = "Passwords don't match.";
     return;
   }
-  const { data, error } = await sb.auth.signUp({
-    email,
-    password,
-    options: { data: { first_name: firstName, last_name: lastName } },
-  });
-  if (error) {
-    $("auth-error").textContent = error.message;
-    return;
+  setButtonLoading(btn, true, "Creating account…");
+  try {
+    const { data, error } = await sb.auth.signUp({
+      email,
+      password,
+      options: { data: { first_name: firstName, last_name: lastName } },
+    });
+    if (error) {
+      $("auth-error").textContent = error.message;
+      return;
+    }
+    if (data.user && !data.session) {
+      // Email confirmation is turned on in this Supabase project.
+      $("auth-error").style.color = "var(--evergreen)";
+      $("auth-error").textContent = "Check your email to confirm your account, then sign in.";
+      setAuthTab("signin");
+      return;
+    }
+    await onSignedIn(data.user);
+  } finally {
+    setButtonLoading(btn, false);
   }
-  if (data.user && !data.session) {
-    // Email confirmation is turned on in this Supabase project.
-    $("auth-error").style.color = "var(--evergreen)";
-    $("auth-error").textContent = "Check your email to confirm your account, then sign in.";
-    setAuthTab("signin");
-    return;
-  }
-  await onSignedIn(data.user);
 });
 
 // Shows the signed-in account's name in the drawer (this replaced the
@@ -225,6 +341,7 @@ function showCompleteProfileScreen() {
 
 $("complete-profile-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const btn = submitButtonFor(e);
   const firstName = $("complete-profile-first-name").value.trim();
   const lastName = $("complete-profile-last-name").value.trim();
   $("complete-profile-error").textContent = "";
@@ -232,18 +349,23 @@ $("complete-profile-form").addEventListener("submit", async (e) => {
     $("complete-profile-error").textContent = "Enter your first and last name.";
     return;
   }
-  const { error } = await sb
-    .from("profiles")
-    .update({ first_name: firstName, last_name: lastName })
-    .eq("id", currentUser.id);
-  if (error) {
-    $("complete-profile-error").textContent = "Couldn't save: " + error.message;
-    return;
+  setButtonLoading(btn, true, "Saving…");
+  try {
+    const { error } = await sb
+      .from("profiles")
+      .update({ first_name: firstName, last_name: lastName })
+      .eq("id", currentUser.id);
+    if (error) {
+      $("complete-profile-error").textContent = "Couldn't save: " + error.message;
+      return;
+    }
+    currentUser.firstName = firstName;
+    currentUser.lastName = lastName;
+    setAccountName([firstName, lastName].join(" "));
+    await enterDashboard();
+  } finally {
+    setButtonLoading(btn, false);
   }
-  currentUser.firstName = firstName;
-  currentUser.lastName = lastName;
-  setAccountName([firstName, lastName].join(" "));
-  await enterDashboard();
 });
 
 $("complete-profile-logout").addEventListener("click", signOutEverywhere);
@@ -315,50 +437,64 @@ const joinGroupBtn = document.querySelector('.new-group-row .btn-gold');
 
 if (createGroupBtn) {
   createGroupBtn.addEventListener("click", async () => {
-    if (!currentUser) { alert("Sign in first to create a group."); return; }
+    if (!currentUser) { showToast("Sign in first to create a group.", "error"); return; }
     const name = newGroupNameInput.value.trim();
     if (!name) { newGroupNameInput.focus(); return; }
 
-    const { data: group, error } = await sb
-      .from("groups")
-      .insert({ name, created_by: currentUser.id })
-      .select()
-      .single();
-    if (error) { alert("Couldn't create group: " + error.message); return; }
+    setButtonLoading(createGroupBtn, true, "Creating…");
+    try {
+      const { data: group, error } = await sb
+        .from("groups")
+        .insert({ name, created_by: currentUser.id })
+        .select()
+        .single();
+      if (error) { showToast("Couldn't create group: " + error.message, "error"); return; }
 
-    // No nickname override -- the display name falls back to the
-    // member's real first/last name (set at sign-up).
-    const { error: memberError } = await sb
-      .from("group_members")
-      .insert({ group_id: group.id, user_id: currentUser.id });
-    if (memberError) { alert("Group created, but couldn't add you to it: " + memberError.message); return; }
+      // No nickname override -- the display name falls back to the
+      // member's real first/last name (set at sign-up).
+      const { error: memberError } = await sb
+        .from("group_members")
+        .insert({ group_id: group.id, user_id: currentUser.id });
+      if (memberError) { showToast("Group created, but couldn't add you to it: " + memberError.message, "error"); return; }
 
-    newGroupNameInput.value = "";
-    await loadGroups();
+      newGroupNameInput.value = "";
+      showToast(`"${name}" created.`, "success");
+      await loadGroups();
+    } finally {
+      setButtonLoading(createGroupBtn, false);
+    }
   });
+  newGroupNameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); createGroupBtn.click(); } });
 }
 
 if (joinGroupBtn) {
   joinGroupBtn.addEventListener("click", async () => {
-    if (!currentUser) { alert("Sign in first to join a group."); return; }
+    if (!currentUser) { showToast("Sign in first to join a group.", "error"); return; }
     const code = joinCodeInput.value.trim();
     if (!code) { joinCodeInput.focus(); return; }
 
-    const { data: group, error } = await sb
-      .from("groups")
-      .select("id, name")
-      .eq("invite_code", code)
-      .maybeSingle();
-    if (error || !group) { alert("No group found with that invite code."); return; }
+    setButtonLoading(joinGroupBtn, true, "Joining…");
+    try {
+      const { data: group, error } = await sb
+        .from("groups")
+        .select("id, name")
+        .eq("invite_code", code)
+        .maybeSingle();
+      if (error || !group) { showToast("No group found with that invite code.", "error"); return; }
 
-    const { error: memberError } = await sb
-      .from("group_members")
-      .insert({ group_id: group.id, user_id: currentUser.id });
-    if (memberError) { alert("Couldn't join: " + memberError.message); return; }
+      const { error: memberError } = await sb
+        .from("group_members")
+        .insert({ group_id: group.id, user_id: currentUser.id });
+      if (memberError) { showToast("Couldn't join: " + memberError.message, "error"); return; }
 
-    joinCodeInput.value = "";
-    await loadGroups();
+      joinCodeInput.value = "";
+      showToast(`Joined "${group.name}".`, "success");
+      await loadGroups();
+    } finally {
+      setButtonLoading(joinGroupBtn, false);
+    }
   });
+  joinCodeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); joinGroupBtn.click(); } });
 }
 
 // ---------- Skeleton loaders ----------
@@ -481,14 +617,19 @@ async function searchMembersByName() {
 
   resultsList.querySelectorAll("[data-add-id]").forEach(btn => {
     btn.addEventListener("click", async () => {
-      const { error: addError } = await sb.rpc("add_group_member_by_id", {
-        target_group_id: currentGroupId,
-        target_user_id: btn.dataset.addId,
-      });
-      if (addError) { alert("Couldn't add: " + addError.message); return; }
-      $("member-search-input").value = "";
-      resultsList.innerHTML = "";
-      await loadMembers();
+      setButtonLoading(btn, true);
+      try {
+        const { error: addError } = await sb.rpc("add_group_member_by_id", {
+          target_group_id: currentGroupId,
+          target_user_id: btn.dataset.addId,
+        });
+        if (addError) { showToast("Couldn't add: " + addError.message, "error"); return; }
+        $("member-search-input").value = "";
+        resultsList.innerHTML = "";
+        await loadMembers();
+      } finally {
+        setButtonLoading(btn, false);
+      }
     });
   });
 }
@@ -568,25 +709,43 @@ function renderItems(memberUserId, items, error) {
     if (addBtn) addBtn.addEventListener("click", openAddItemModal);
     container.querySelectorAll("[data-remove-id]").forEach(btn => {
       btn.addEventListener("click", async () => {
-        if (prefs.confirmRemove && !confirm("Remove this item from your wishlist?")) return;
-        const { error: delError } = await sb.from("wishlist_items").delete().eq("id", btn.dataset.removeId);
-        if (delError) { alert("Couldn't remove item: " + delError.message); return; }
-        await loadWishlist(currentUser.id);
+        if (prefs.confirmRemove) {
+          const ok = await confirmAction("Remove this item from your wishlist?", { confirmLabel: "Remove", danger: true });
+          if (!ok) return;
+        }
+        setButtonLoading(btn, true);
+        try {
+          const { error: delError } = await sb.from("wishlist_items").delete().eq("id", btn.dataset.removeId);
+          if (delError) { showToast("Couldn't remove item: " + delError.message, "error"); return; }
+          await loadWishlist(currentUser.id);
+        } finally {
+          setButtonLoading(btn, false);
+        }
       });
     });
   } else {
     container.querySelectorAll("[data-mark-id]").forEach(btn => {
       btn.addEventListener("click", async () => {
-        const { error: markError } = await sb.rpc("mark_item_purchased", { target_item_id: btn.dataset.markId });
-        if (markError) { alert("Couldn't mark as bought: " + markError.message); return; }
-        await loadWishlist(memberUserId);
+        setButtonLoading(btn, true);
+        try {
+          const { error: markError } = await sb.rpc("mark_item_purchased", { target_item_id: btn.dataset.markId });
+          if (markError) { showToast("Couldn't mark as bought: " + markError.message, "error"); return; }
+          await loadWishlist(memberUserId);
+        } finally {
+          setButtonLoading(btn, false);
+        }
       });
     });
     container.querySelectorAll("[data-unmark-id]").forEach(btn => {
       btn.addEventListener("click", async () => {
-        const { error: unmarkError } = await sb.rpc("unmark_item_purchased", { target_item_id: btn.dataset.unmarkId });
-        if (unmarkError) { alert("Couldn't undo: " + unmarkError.message); return; }
-        await loadWishlist(memberUserId);
+        setButtonLoading(btn, true);
+        try {
+          const { error: unmarkError } = await sb.rpc("unmark_item_purchased", { target_item_id: btn.dataset.unmarkId });
+          if (unmarkError) { showToast("Couldn't undo: " + unmarkError.message, "error"); return; }
+          await loadWishlist(memberUserId);
+        } finally {
+          setButtonLoading(btn, false);
+        }
       });
     });
   }
@@ -608,6 +767,7 @@ $("back-to-dashboard").addEventListener("click", () => goToScreen("dashboard-scr
 function openDrawer() {
   $("member-drawer").classList.add("open");
   $("drawer-backdrop").classList.remove("hidden");
+  $("drawer-close").focus();
 }
 function closeDrawer() {
   $("member-drawer").classList.remove("open");
@@ -720,7 +880,7 @@ function showAdminResetForm(userId) {
       <label>Confirm new password</label>
       <input type="password" id="admin-reset-confirm-${userId}" minlength="6" autocomplete="new-password" />
     </div>
-    <p class="admin-reset-error" id="admin-reset-error-${userId}"></p>
+    <p class="admin-reset-error" id="admin-reset-error-${userId}" role="alert"></p>
     <div style="display:flex; gap:8px;">
       <button class="btn btn-ghost btn-small" style="flex:1;" data-admin-cancel="${userId}">Cancel</button>
       <button class="btn btn-primary btn-small" style="flex:1;" data-admin-save="${userId}">Save new password</button>
@@ -730,10 +890,10 @@ function showAdminResetForm(userId) {
     container.classList.add("hidden");
     container.innerHTML = "";
   });
-  container.querySelector(`[data-admin-save="${userId}"]`).addEventListener("click", () => performAdminReset(userId));
+  container.querySelector(`[data-admin-save="${userId}"]`).addEventListener("click", (e) => performAdminReset(userId, e.currentTarget));
 }
 
-async function performAdminReset(userId) {
+async function performAdminReset(userId, btn) {
   const newPassword = $("admin-reset-new-" + userId).value;
   const confirm = $("admin-reset-confirm-" + userId).value;
   const errorEl = $("admin-reset-error-" + userId);
@@ -748,6 +908,7 @@ async function performAdminReset(userId) {
     return;
   }
 
+  setButtonLoading(btn, true, "Saving…");
   try {
     const { data: sessionData } = await sb.auth.getSession();
     const token = sessionData && sessionData.session && sessionData.session.access_token;
@@ -763,8 +924,11 @@ async function performAdminReset(userId) {
     }
     errorEl.style.color = "var(--evergreen)";
     errorEl.textContent = "Password updated.";
+    showToast("Password updated.", "success");
   } catch (err) {
     errorEl.textContent = "Couldn't update password: " + err.message;
+  } finally {
+    setButtonLoading(btn, false);
   }
 }
 
@@ -788,40 +952,46 @@ $("add-item-submit").addEventListener("click", async () => {
   let description = "";
   let image_url = null;
 
-  // Ask the /api/scrape serverless function for a photo + description
-  // from the link, if one was given. Falls back quietly if it's not
-  // deployed yet or the fetch fails for any reason.
-  if (link) {
-    try {
-      const res = await fetch("/api/scrape", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: link }),
-      });
-      if (res.ok) {
-        const scraped = await res.json();
-        description = scraped.description || "";
-        image_url = scraped.image || null;
+  setButtonLoading($("add-item-submit"), true, "Adding…");
+  try {
+    // Ask the /api/scrape serverless function for a photo + description
+    // from the link, if one was given. Falls back quietly if it's not
+    // deployed yet or the fetch fails for any reason.
+    if (link) {
+      try {
+        const res = await fetch("/api/scrape", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: link }),
+        });
+        if (res.ok) {
+          const scraped = await res.json();
+          description = scraped.description || "";
+          image_url = scraped.image || null;
+        }
+      } catch (err) {
+        // Scraper not available (e.g. running before this is deployed on Vercel) — that's fine.
       }
-    } catch (err) {
-      // Scraper not available (e.g. running before this is deployed on Vercel) — that's fine.
     }
+
+    const { error } = await sb.from("wishlist_items").insert({
+      group_id: currentGroupId,
+      user_id: currentUser.id,
+      name,
+      description,
+      link: link || null,
+      image_url,
+    });
+    if (error) { showToast("Couldn't add item: " + error.message, "error"); return; }
+
+    $("item-name-input").value = "";
+    $("item-link-input").value = "";
+    closeAddItemModal();
+    showToast(`Added "${name}" to your wishlist.`, "success");
+    await loadWishlist(currentUser.id);
+  } finally {
+    setButtonLoading($("add-item-submit"), false);
   }
-
-  const { error } = await sb.from("wishlist_items").insert({
-    group_id: currentGroupId,
-    user_id: currentUser.id,
-    name,
-    description,
-    link: link || null,
-    image_url,
-  });
-  if (error) { alert("Couldn't add item: " + error.message); return; }
-
-  $("item-name-input").value = "";
-  $("item-link-input").value = "";
-  closeAddItemModal();
-  await loadWishlist(currentUser.id);
 });
 $("item-name-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("add-item-submit").click(); });
 $("item-link-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("add-item-submit").click(); });
@@ -902,29 +1072,43 @@ function renderSettingsContent() {
 
   if (inGroup) {
     $("nickname-save-btn").addEventListener("click", async () => {
+      const btn = $("nickname-save-btn");
       // Leaving this blank clears the override, so the display name
       // falls back to the member's real first/last name again.
       const nickname = $("nickname-input").value.trim() || null;
-      const { error } = await sb
-        .from("group_members")
-        .update({ nickname })
-        .eq("group_id", currentGroupId)
-        .eq("user_id", currentUser.id);
-      if (error) { alert("Couldn't save nickname: " + error.message); return; }
-      await loadMembers();
+      setButtonLoading(btn, true);
+      try {
+        const { error } = await sb
+          .from("group_members")
+          .update({ nickname })
+          .eq("group_id", currentGroupId)
+          .eq("user_id", currentUser.id);
+        if (error) { showToast("Couldn't save nickname: " + error.message, "error"); return; }
+        showToast("Nickname saved.", "success");
+        await loadMembers();
+      } finally {
+        setButtonLoading(btn, false);
+      }
     });
 
     $("settings-leave-group-btn").addEventListener("click", async () => {
-      if (!confirm("Leave this group? You can rejoin later with the invite code.")) return;
-      const { error } = await sb
-        .from("group_members")
-        .delete()
-        .eq("group_id", currentGroupId)
-        .eq("user_id", currentUser.id);
-      if (error) { alert("Couldn't leave group: " + error.message); return; }
-      closeSettingsModal();
-      goToScreen("dashboard-screen");
-      await loadGroups();
+      const ok = await confirmAction("Leave this group? You can rejoin later with the invite code.", { confirmLabel: "Leave group", danger: true });
+      if (!ok) return;
+      const btn = $("settings-leave-group-btn");
+      setButtonLoading(btn, true, "Leaving…");
+      try {
+        const { error } = await sb
+          .from("group_members")
+          .delete()
+          .eq("group_id", currentGroupId)
+          .eq("user_id", currentUser.id);
+        if (error) { showToast("Couldn't leave group: " + error.message, "error"); return; }
+        closeSettingsModal();
+        goToScreen("dashboard-screen");
+        await loadGroups();
+      } finally {
+        setButtonLoading(btn, false);
+      }
     });
   }
 
@@ -958,12 +1142,12 @@ function renderDeleteAccountConfirm() {
 }
 
 async function performAccountDeletion() {
-  $("delete-account-zone").innerHTML = `<p style="font-size:0.85rem;">Deleting your account…</p>`;
+  $("delete-account-zone").innerHTML = `<p style="font-size:0.85rem;"><span class="spinner"></span> Deleting your account…</p>`;
   try {
     const { data: sessionData } = await sb.auth.getSession();
     const token = sessionData && sessionData.session && sessionData.session.access_token;
     if (!token) {
-      alert("Your session has expired -- please sign in again before deleting your account.");
+      showToast("Your session has expired -- please sign in again before deleting your account.", "error");
       renderDeleteAccountInitial();
       return;
     }
@@ -975,7 +1159,7 @@ async function performAccountDeletion() {
     const result = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      alert("Couldn't delete your account: " + (result.error || "unknown error"));
+      showToast("Couldn't delete your account: " + (result.error || "unknown error"), "error");
       renderDeleteAccountInitial();
       return;
     }
@@ -985,9 +1169,9 @@ async function performAccountDeletion() {
     currentUser = null;
     currentGroupId = null;
     goToScreen("start-screen");
-    alert("Your account has been deleted.");
+    showToast("Your account has been deleted.", "success");
   } catch (err) {
-    alert("Couldn't delete your account: " + err.message);
+    showToast("Couldn't delete your account: " + err.message, "error");
     renderDeleteAccountInitial();
   }
 }
@@ -996,6 +1180,7 @@ function openSettingsModal() {
   $("settings-backdrop").classList.remove("hidden");
   $("settings-modal").classList.remove("hidden");
   $("settings-modal-body").innerHTML = skeletonSettingsRows();
+  $("settings-close").focus();
   setTimeout(renderSettingsContent, 300);
 }
 function closeSettingsModal() {
