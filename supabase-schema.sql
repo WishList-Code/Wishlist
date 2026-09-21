@@ -19,6 +19,8 @@ create extension if not exists "pgcrypto";
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   email text,
+  first_name text,
+  last_name text,
   created_at timestamptz not null default now()
 );
 
@@ -47,6 +49,11 @@ create table if not exists public.wishlist_items (
   description text,
   link text,
   image_url text,
+  -- Who marked this item as bought, and when. Never exposed to the
+  -- item's own owner (see wishlist_items_view below) -- that's what
+  -- keeps it a surprise.
+  purchased_by uuid references public.profiles (id) on delete set null,
+  purchased_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -136,6 +143,10 @@ create policy "a user can remove themselves from a group (leave)"
   on public.group_members for delete
   using (user_id = auth.uid());
 
+create policy "a member can update their own membership row (nickname)"
+  on public.group_members for update
+  using (user_id = auth.uid());
+
 create policy "members can view items in their groups"
   on public.wishlist_items for select
   using (
@@ -160,14 +171,21 @@ create policy "a member can delete their own items"
 -- ============================================================
 -- 5. Auto-create a profile row whenever someone signs up
 -- ============================================================
+-- first_name/last_name come from the extra data passed to
+-- supabase.auth.signUp({ options: { data: { first_name, last_name } } }).
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer set search_path = public
 as $$
 begin
-  insert into public.profiles (id, email)
-  values (new.id, new.email);
+  insert into public.profiles (id, email, first_name, last_name)
+  values (
+    new.id,
+    new.email,
+    new.raw_user_meta_data ->> 'first_name',
+    new.raw_user_meta_data ->> 'last_name'
+  );
   return new;
 end;
 $$;
@@ -176,3 +194,159 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
+-- ============================================================
+-- 6. Purchase tracking, hidden from the item's own wisher
+-- ============================================================
+-- A security_invoker view: it enforces the querying user's own RLS on the
+-- underlying tables (so you still only ever see items in groups you belong
+-- to), but additionally nulls out the purchase columns whenever the viewer
+-- is the item's own owner -- so the person an item is for can never see,
+-- via this view, whether it's been bought. The app reads through this view;
+-- writes (insert/delete of items) still go through the plain table, and
+-- purchase marking goes through the two RPC functions below.
+create or replace view public.wishlist_items_view
+with (security_invoker = true)
+as
+select
+  wi.id,
+  wi.group_id,
+  wi.user_id,
+  wi.name,
+  wi.description,
+  wi.link,
+  wi.image_url,
+  wi.created_at,
+  case when wi.user_id = auth.uid() then null else wi.purchased_by end as purchased_by,
+  case when wi.user_id = auth.uid() then null else wi.purchased_at end as purchased_at,
+  case when wi.user_id = auth.uid() then null else p.first_name end as purchased_by_first_name,
+  case when wi.user_id = auth.uid() then null else p.last_name end as purchased_by_last_name
+from public.wishlist_items wi
+left join public.profiles p on p.id = wi.purchased_by;
+
+grant select on public.wishlist_items_view to authenticated;
+
+-- Marking an item purchased: only a fellow group member (never the item's
+-- own owner) can do this, and only once (first to mark it wins).
+create or replace function public.mark_item_purchased(target_item_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  item record;
+begin
+  select * into item from public.wishlist_items where id = target_item_id;
+  if item is null then
+    raise exception 'Item not found';
+  end if;
+
+  if item.user_id = auth.uid() then
+    raise exception 'You cannot mark your own item as bought';
+  end if;
+
+  if item.group_id not in (select public.get_my_group_ids()) then
+    raise exception 'You are not a member of this group';
+  end if;
+
+  if item.purchased_by is not null then
+    raise exception 'This item has already been marked as bought';
+  end if;
+
+  update public.wishlist_items
+  set purchased_by = auth.uid(), purchased_at = now()
+  where id = target_item_id;
+end;
+$$;
+
+-- Undoing a purchase mark: only the person who marked it can undo it.
+create or replace function public.unmark_item_purchased(target_item_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  item record;
+begin
+  select * into item from public.wishlist_items where id = target_item_id;
+  if item is null then
+    raise exception 'Item not found';
+  end if;
+
+  if item.purchased_by is distinct from auth.uid() then
+    raise exception 'Only the person who marked this as bought can undo it';
+  end if;
+
+  update public.wishlist_items
+  set purchased_by = null, purchased_at = null
+  where id = target_item_id;
+end;
+$$;
+
+revoke all on function public.mark_item_purchased(uuid) from public;
+revoke all on function public.unmark_item_purchased(uuid) from public;
+grant execute on function public.mark_item_purchased(uuid) to authenticated;
+grant execute on function public.unmark_item_purchased(uuid) to authenticated;
+
+-- ============================================================
+-- 7. Owner-assisted "add by name" joining
+-- ============================================================
+
+-- Search everyone's name (not gated to groupmates -- you need to be able
+-- to find someone BEFORE they're in any group with you). Returns only
+-- name + email, never anything sensitive.
+create or replace function public.search_profiles_by_name(query text)
+returns table(id uuid, first_name text, last_name text, email text)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select id, first_name, last_name, email
+  from public.profiles
+  where
+    query is not null and length(trim(query)) > 0
+    and (
+      first_name ilike '%' || query || '%'
+      or last_name ilike '%' || query || '%'
+      or coalesce(first_name || ' ' || last_name, '') ilike '%' || query || '%'
+    )
+  limit 20;
+$$;
+
+-- Only the group's creator (owner) can add someone directly this way.
+create or replace function public.add_group_member_by_id(target_group_id uuid, target_user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  grp record;
+  target_profile record;
+begin
+  select * into grp from public.groups where id = target_group_id;
+  if grp is null then
+    raise exception 'Group not found';
+  end if;
+
+  if grp.created_by is distinct from auth.uid() then
+    raise exception 'Only the group owner can add members this way';
+  end if;
+
+  select * into target_profile from public.profiles where id = target_user_id;
+  if target_profile is null then
+    raise exception 'That person could not be found';
+  end if;
+
+  insert into public.group_members (group_id, user_id)
+  values (target_group_id, target_user_id)
+  on conflict (group_id, user_id) do nothing;
+end;
+$$;
+
+revoke all on function public.search_profiles_by_name(text) from public;
+revoke all on function public.add_group_member_by_id(uuid, uuid) from public;
+grant execute on function public.search_profiles_by_name(text) to authenticated;
+grant execute on function public.add_group_member_by_id(uuid, uuid) to authenticated;
