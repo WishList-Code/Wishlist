@@ -57,9 +57,10 @@ applyPrefs();
 function goToScreen(id) {
   document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
   $(id).classList.add("active");
-  $("ai-fab").classList.toggle("hidden", id !== "group-screen");
-  if (id !== "group-screen") {
-    $("ai-panel").classList.add("hidden");
+  // The drawer/settings/add-item overlays only make sense once you're
+  // signed in and past the profile-completion gate -- close them on the
+  // way to any other screen (start, auth, complete-profile).
+  if (id !== "dashboard-screen" && id !== "group-screen") {
     closeDrawer();
     $("settings-backdrop").classList.add("hidden");
     $("settings-modal").classList.add("hidden");
@@ -150,11 +151,14 @@ $("forgot-password-link").addEventListener("click", async () => {
   $("auth-error").textContent = error ? error.message : "Password reset email sent.";
 });
 
-function setUserBadge(text) {
-  document.querySelectorAll(".user-badge-email").forEach(el => { el.textContent = text || ""; });
+// Shows the signed-in account's name in the drawer (this replaced the
+// old header name+"Log out" badge -- the drawer is now the one place
+// that shows who you're signed in as).
+function setAccountName(text) {
+  $("drawer-account-name").textContent = text || "";
 }
 
-// Look up the signed-in user's name (for the header badge and defaults
+// Look up the signed-in user's name (for the drawer and defaults
 // elsewhere) now that accounts have real first/last names.
 async function loadCurrentUserProfile() {
   const { data } = await sb
@@ -165,7 +169,7 @@ async function loadCurrentUserProfile() {
   currentUser.firstName = data ? data.first_name : null;
   currentUser.lastName = data ? data.last_name : null;
   const fullName = [currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ");
-  setUserBadge(fullName || currentUser.email);
+  setAccountName(fullName || currentUser.email);
 }
 
 async function signOutEverywhere() {
@@ -174,13 +178,21 @@ async function signOutEverywhere() {
   currentGroupId = null;
   goToScreen("start-screen");
 }
-document.querySelectorAll(".header-logout-btn").forEach(btn => {
-  btn.addEventListener("click", signOutEverywhere);
-});
+
+// Any account missing a first/last name (made before named accounts
+// existed, or added to a group by name without ever signing up itself)
+// has to fill that in before it can use the rest of the app.
+function hasCompleteProfile() {
+  return !!(currentUser && currentUser.firstName && currentUser.lastName);
+}
 
 async function onSignedIn(user) {
   currentUser = { id: user.id, email: user.email };
   await loadCurrentUserProfile();
+  if (!hasCompleteProfile()) {
+    showCompleteProfileScreen();
+    return;
+  }
   await enterDashboard();
 }
 
@@ -191,9 +203,46 @@ async function onSignedIn(user) {
   if (data.session && data.session.user) {
     currentUser = { id: data.session.user.id, email: data.session.user.email };
     await loadCurrentUserProfile();
+    if (!hasCompleteProfile()) {
+      showCompleteProfileScreen();
+      return;
+    }
     await enterDashboard();
   }
 })();
+
+// ---------- Complete-your-profile gate ----------
+function showCompleteProfileScreen() {
+  $("complete-profile-error").textContent = "";
+  $("complete-profile-first-name").value = currentUser.firstName || "";
+  $("complete-profile-last-name").value = currentUser.lastName || "";
+  goToScreen("complete-profile-screen");
+}
+
+$("complete-profile-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const firstName = $("complete-profile-first-name").value.trim();
+  const lastName = $("complete-profile-last-name").value.trim();
+  $("complete-profile-error").textContent = "";
+  if (!firstName || !lastName) {
+    $("complete-profile-error").textContent = "Enter your first and last name.";
+    return;
+  }
+  const { error } = await sb
+    .from("profiles")
+    .update({ first_name: firstName, last_name: lastName })
+    .eq("id", currentUser.id);
+  if (error) {
+    $("complete-profile-error").textContent = "Couldn't save: " + error.message;
+    return;
+  }
+  currentUser.firstName = firstName;
+  currentUser.lastName = lastName;
+  setAccountName([firstName, lastName].join(" "));
+  await enterDashboard();
+});
+
+$("complete-profile-logout").addEventListener("click", signOutEverywhere);
 
 // ============================================================
 // Dashboard — your groups
@@ -472,7 +521,11 @@ function renderItems(memberUserId, items, error) {
       // surprise stays hidden even if that ever changes.
       let purchaseHtml = "";
       if (!isMine) {
-        if (item.purchased_by) {
+        // Checked via purchased_at, not purchased_by: if the person who
+        // bought it later deletes their account, purchased_by is cleared
+        // (so nobody's credited for it anymore) but the item should
+        // still show as bought, not flip back to "Mark as bought".
+        if (item.purchased_at) {
           const isBuyer = item.purchased_by === currentUser.id;
           const buyerName = [item.purchased_by_first_name, item.purchased_by_last_name].filter(Boolean).join(" ");
           purchaseHtml = `
@@ -539,69 +592,7 @@ function escapeHtml(str) {
 
 $("back-to-dashboard").addEventListener("click", () => goToScreen("dashboard-screen"));
 
-$("ai-fab").addEventListener("click", () => $("ai-panel").classList.toggle("hidden"));
-$("ai-close").addEventListener("click", () => $("ai-panel").classList.add("hidden"));
-
-// ---------- Gift idea assistant (talks to /api/chat, which calls Gemini) ----------
-// Keeps a short in-memory history so the assistant has context, but nothing
-// here is saved anywhere — it resets if the page reloads.
-let aiChatHistory = [];
-
-function addChatMessage(role, text) {
-  const div = document.createElement("div");
-  div.className = `chat-msg ${role === "ai" ? "ai" : "user"}`;
-  div.textContent = text;
-  $("ai-messages").appendChild(div);
-  $("ai-messages").scrollTop = $("ai-messages").scrollHeight;
-  return div;
-}
-
-async function sendAiChatMessage() {
-  const input = $("ai-chat-input");
-  const message = input.value.trim();
-  if (!message) return;
-
-  input.value = "";
-  input.disabled = true;
-  $("ai-chat-send-btn").disabled = true;
-
-  addChatMessage("user", message);
-  const thinkingBubble = addChatMessage("ai", "Thinking...");
-
-  try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, history: aiChatHistory }),
-    });
-    const data = await res.json().catch(() => ({}));
-
-    if (res.ok && data.reply) {
-      thinkingBubble.textContent = data.reply;
-      aiChatHistory.push({ role: "user", content: message });
-      aiChatHistory.push({ role: "ai", content: data.reply });
-      // Keep the history from growing without bound.
-      if (aiChatHistory.length > 20) aiChatHistory = aiChatHistory.slice(-20);
-    } else {
-      thinkingBubble.textContent =
-        data.error ||
-        "Sorry, the gift idea assistant isn't available right now (it needs to be deployed on Vercel with a Gemini API key).";
-    }
-  } catch (err) {
-    thinkingBubble.textContent =
-      "Sorry, I couldn't reach the assistant just now — check your connection and try again.";
-  }
-
-  input.disabled = false;
-  $("ai-chat-send-btn").disabled = false;
-  input.focus();
-}
-
-$("ai-chat-send-btn").addEventListener("click", sendAiChatMessage);
-$("ai-chat-input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") sendAiChatMessage();
-});
-// ---------- Right-side group menu drawer ----------
+// ---------- Right-side account/menu drawer ----------
 function openDrawer() {
   $("member-drawer").classList.add("open");
   $("drawer-backdrop").classList.remove("hidden");
@@ -610,7 +601,12 @@ function closeDrawer() {
   $("member-drawer").classList.remove("open");
   $("drawer-backdrop").classList.add("hidden");
 }
-$("hamburger-btn").addEventListener("click", openDrawer);
+// The hamburger button is duplicated in each screen's own header (see
+// index.html) rather than being one fixed overlay element, so every
+// copy of it needs the same click handler.
+document.querySelectorAll(".hamburger-btn").forEach(btn => {
+  btn.addEventListener("click", openDrawer);
+});
 $("drawer-close").addEventListener("click", closeDrawer);
 $("drawer-backdrop").addEventListener("click", closeDrawer);
 
@@ -733,8 +729,11 @@ function renderSettingsContent() {
     ${switchRow("notif-toggle", "Notify me when someone adds an item", true)}
 
     ${sectionLabel("Account", 18)}
+    <p style="font-size:0.85rem; margin:0 0 10px;">Signed in as <strong>${escapeHtml([currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ") || currentUser.email)}</strong></p>
     <button class="btn btn-ghost btn-small" style="width:100%; margin-bottom:8px;" id="settings-logout-btn">Log out</button>
-    ${inGroup ? `<button class="btn btn-ghost btn-small" style="width:100%; color:var(--danger); border-color:var(--danger);" id="settings-leave-group-btn">Leave this group</button>` : ""}
+    ${inGroup ? `<button class="btn btn-ghost btn-small" style="width:100%; margin-bottom:8px; color:var(--danger); border-color:var(--danger);" id="settings-leave-group-btn">Leave this group</button>` : ""}
+
+    <div id="delete-account-zone" style="margin-top:8px;"></div>
 
     <p style="text-align:center; font-size:0.75rem; color:var(--evergreen-dark); margin:18px 0 0;">Wishlist</p>
   `;
@@ -780,6 +779,64 @@ function renderSettingsContent() {
     closeSettingsModal();
     await signOutEverywhere();
   });
+
+  renderDeleteAccountInitial();
+}
+
+// ---------- Delete account (two-step confirmation, so no accidental
+// deletes happen) ----------
+function renderDeleteAccountInitial() {
+  $("delete-account-zone").innerHTML = `
+    <button class="btn btn-ghost btn-small" style="width:100%; color:var(--danger); border-color:var(--danger);" id="delete-account-btn">Delete account</button>
+  `;
+  $("delete-account-btn").addEventListener("click", renderDeleteAccountConfirm);
+}
+
+function renderDeleteAccountConfirm() {
+  $("delete-account-zone").innerHTML = `
+    <p style="font-size:0.8rem; color:var(--danger); margin:0 0 10px;">This permanently deletes your account: your wishlist items, and your membership in every group. Groups you created stay for everyone else, but you won't be part of them anymore. This can't be undone.</p>
+    <div style="display:flex; gap:8px;">
+      <button class="btn btn-ghost btn-small" style="flex:1;" id="delete-account-cancel">Cancel</button>
+      <button class="btn btn-small" style="flex:1; background:var(--danger); color:#fff;" id="delete-account-confirm">Yes, delete my account</button>
+    </div>
+  `;
+  $("delete-account-cancel").addEventListener("click", renderDeleteAccountInitial);
+  $("delete-account-confirm").addEventListener("click", performAccountDeletion);
+}
+
+async function performAccountDeletion() {
+  $("delete-account-zone").innerHTML = `<p style="font-size:0.85rem;">Deleting your account…</p>`;
+  try {
+    const { data: sessionData } = await sb.auth.getSession();
+    const token = sessionData && sessionData.session && sessionData.session.access_token;
+    if (!token) {
+      alert("Your session has expired -- please sign in again before deleting your account.");
+      renderDeleteAccountInitial();
+      return;
+    }
+
+    const res = await fetch("/api/delete-account", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    });
+    const result = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert("Couldn't delete your account: " + (result.error || "unknown error"));
+      renderDeleteAccountInitial();
+      return;
+    }
+
+    closeSettingsModal();
+    await sb.auth.signOut();
+    currentUser = null;
+    currentGroupId = null;
+    goToScreen("start-screen");
+    alert("Your account has been deleted.");
+  } catch (err) {
+    alert("Couldn't delete your account: " + err.message);
+    renderDeleteAccountInitial();
+  }
 }
 
 function openSettingsModal() {
