@@ -382,3 +382,120 @@ create policy "a user can add their own push subscription"
 create policy "a user can remove their own push subscription"
   on public.push_subscriptions for delete
   using (user_id = auth.uid());
+
+-- ============================================================
+-- 9. Owner-only group management: rename, remove a member,
+--    transfer ownership, regenerate the invite code, delete the group
+-- ============================================================
+-- Renaming is a plain client-side `.update()` on the groups table (see
+-- app.js), so it needs its own RLS policy; deleting a group is likewise
+-- a plain `.delete()`. Removing a member, transferring ownership, and
+-- regenerating the invite code go through SECURITY DEFINER functions
+-- below instead, since each needs to check things RLS alone can't
+-- (who the target member is, that a new owner is actually a member).
+
+create policy "the owner can rename their group"
+  on public.groups for update
+  using (created_by = auth.uid());
+
+create policy "the owner can delete their group"
+  on public.groups for delete
+  using (created_by = auth.uid());
+
+-- Only the group's owner can remove someone else from the group this
+-- way; removing yourself is "Leave this group" in Settings instead, and
+-- an owner can't remove themselves here (they'd transfer ownership or
+-- delete the group instead).
+create or replace function public.remove_group_member(target_group_id uuid, target_user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  grp record;
+begin
+  select * into grp from public.groups where id = target_group_id;
+  if grp is null then
+    raise exception 'Group not found';
+  end if;
+
+  if grp.created_by is distinct from auth.uid() then
+    raise exception 'Only the group owner can remove members';
+  end if;
+
+  if target_user_id = auth.uid() then
+    raise exception 'Use "Leave this group" to remove yourself';
+  end if;
+
+  delete from public.group_members
+  where group_id = target_group_id and user_id = target_user_id;
+end;
+$$;
+
+-- Hands ownership of a group to another current member. The new owner
+-- must already be a member; the caller must be the current owner.
+create or replace function public.transfer_group_ownership(target_group_id uuid, new_owner_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  grp record;
+  is_member boolean;
+begin
+  select * into grp from public.groups where id = target_group_id;
+  if grp is null then
+    raise exception 'Group not found';
+  end if;
+
+  if grp.created_by is distinct from auth.uid() then
+    raise exception 'Only the group owner can transfer ownership';
+  end if;
+
+  select exists(
+    select 1 from public.group_members
+    where group_id = target_group_id and user_id = new_owner_id
+  ) into is_member;
+  if not is_member then
+    raise exception 'That person is not a member of this group';
+  end if;
+
+  update public.groups set created_by = new_owner_id where id = target_group_id;
+end;
+$$;
+
+-- Generates a fresh invite code for the group (the old one stops
+-- working immediately) and returns it. Owner only.
+create or replace function public.regenerate_invite_code(target_group_id uuid)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  grp record;
+  new_code text;
+begin
+  select * into grp from public.groups where id = target_group_id;
+  if grp is null then
+    raise exception 'Group not found';
+  end if;
+
+  if grp.created_by is distinct from auth.uid() then
+    raise exception 'Only the group owner can regenerate the invite code';
+  end if;
+
+  new_code := substr(md5(random()::text), 1, 8);
+  update public.groups set invite_code = new_code where id = target_group_id;
+  return new_code;
+end;
+$$;
+
+revoke all on function public.remove_group_member(uuid, uuid) from public;
+revoke all on function public.transfer_group_ownership(uuid, uuid) from public;
+revoke all on function public.regenerate_invite_code(uuid) from public;
+grant execute on function public.remove_group_member(uuid, uuid) to authenticated;
+grant execute on function public.transfer_group_ownership(uuid, uuid) to authenticated;
+grant execute on function public.regenerate_invite_code(uuid) to authenticated;
