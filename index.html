@@ -22,7 +22,7 @@
 <meta name="apple-mobile-web-app-title" content="Wishlist" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=10" />
+<link rel="stylesheet" href="style.css?v=11" />
 </head>
 <body>
 
@@ -210,7 +210,14 @@
       <div>
         <button class="btn-text" id="back-to-dashboard">&larr; All groups</button>
         <h2 id="group-view-title">Smith Family</h2>
+        <button class="btn-text btn-small hidden" id="group-rename-btn" title="Rename group">Rename</button>
+        <div class="group-rename-row hidden" id="group-rename-row">
+          <input type="text" id="group-rename-input" maxlength="60" />
+          <button class="btn btn-primary btn-small" id="group-rename-save">Save</button>
+          <button class="btn-text btn-small" id="group-rename-cancel">Cancel</button>
+        </div>
         <span class="invite-code" id="group-invite-code">Invite code: 7f3a9c2b</span>
+        <button class="btn-text btn-small hidden" id="group-regen-invite-btn">Regenerate</button>
       </div>
     </div>
 
@@ -231,6 +238,11 @@
         <ul class="member-list" id="member-search-results">
           <!-- filled in by app.js from search_profiles_by_name -->
         </ul>
+      </div>
+
+      <div id="owner-danger-zone" class="hidden">
+        <h4 style="font-size:0.85rem; margin-top:20px; color:var(--danger);">Danger zone</h4>
+        <button class="btn btn-ghost btn-small" style="color:var(--danger); border-color:var(--danger);" id="delete-group-btn">Delete this group</button>
       </div>
     </div>
 
@@ -325,7 +337,7 @@
         <span class="help-icon">🎁</span>
         <div>
           <h4>Wishlists</h4>
-          <p>Inside a group, tap someone's name to see their wishlist. On your own list, tap "+ Add item" — paste a store link and we'll try to grab a photo automatically.</p>
+          <p>Inside a group, tap someone's name to see their wishlist. On your own list, tap "+ Add item" — paste a store link and we'll try to grab a photo automatically, or write your own description like size, color, or why you want it.</p>
         </div>
       </li>
       <li>
@@ -339,7 +351,14 @@
         <span class="help-icon">✏️</span>
         <div>
           <h4>Nicknames &amp; settings</h4>
-          <p>Open the menu (☰) to set a nickname for a group, switch between light, dark, or system theme, or adjust text size and compact view.</p>
+          <p>Open the menu (☰) to set a nickname for a group, switch between light, dark, or system theme, or pick how much bigger you want the text — Normal, Large, XL, or Huge.</p>
+        </div>
+      </li>
+      <li>
+        <span class="help-icon">👑</span>
+        <div>
+          <h4>Group owners</h4>
+          <p>Whoever creates a group owns it. From that group's screen, the owner can rename the group, remove a member, make someone else the owner, regenerate the invite code, or delete the group entirely.</p>
         </div>
       </li>
       <li>
@@ -399,6 +418,10 @@
       <input type="text" id="item-name-input" placeholder="e.g. Noise-cancelling headphones" />
     </div>
     <div class="field">
+      <label>Description <span style="font-weight:400; opacity:0.7;">(optional)</span></label>
+      <textarea id="item-description-input" rows="2" placeholder="Size, color, why you want it..."></textarea>
+    </div>
+    <div class="field">
       <label>Store link</label>
       <input type="url" id="item-link-input" placeholder="https://..." />
     </div>
@@ -421,6 +444,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="config.js?v=1"></script>
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>
