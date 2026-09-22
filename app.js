@@ -148,13 +148,24 @@ document.querySelectorAll("[data-theme-choice]").forEach(btn => {
 });
 applyTheme(localStorage.getItem("wishlist-theme") || "system");
 
-// ---------- Preferences: large text / compact view / confirm-before-remove ----------
+// ---------- Preferences: text size / compact view / confirm-before-remove ----------
+const storedPrefs = JSON.parse(localStorage.getItem("wishlist-prefs") || "{}");
 const prefs = Object.assign(
-  { largeText: false, compactView: false, confirmRemove: true, notifyOnAdd: false },
-  JSON.parse(localStorage.getItem("wishlist-prefs") || "{}")
+  { textSize: "normal", compactView: false, confirmRemove: true, notifyOnAdd: false },
+  storedPrefs
 );
+// Back-compat: earlier versions stored a boolean "largeText" toggle instead
+// of a "textSize" preset with several steps. Migrate it once so nobody's
+// existing preference silently resets, then drop the old key for good.
+if (!("textSize" in storedPrefs) && typeof storedPrefs.largeText === "boolean") {
+  prefs.textSize = storedPrefs.largeText ? "large" : "normal";
+}
+delete prefs.largeText;
 function applyPrefs() {
-  document.documentElement.classList.toggle("large-text", prefs.largeText);
+  document.documentElement.classList.remove("text-size-large", "text-size-xlarge", "text-size-huge");
+  if (prefs.textSize && prefs.textSize !== "normal") {
+    document.documentElement.classList.add("text-size-" + prefs.textSize);
+  }
   document.documentElement.classList.toggle("compact-view", prefs.compactView);
 }
 function setPref(key, value) {
@@ -715,13 +726,28 @@ function showWishlistView() {
   $("group-wishlist-view").classList.remove("hidden");
 }
 
+// Shows/hides the owner-only controls in the group screen (adding
+// members by name, renaming the group, regenerating the invite code,
+// and the danger zone) based on whether the signed-in user is the
+// current owner of the open group. Called on entering a group, and
+// again after a successful ownership transfer.
+function updateGroupOwnerControlsVisibility() {
+  const isOwner = !!(currentUser && currentGroupOwnerId === currentUser.id);
+  $("owner-add-member").classList.toggle("hidden", !isOwner);
+  $("owner-danger-zone").classList.toggle("hidden", !isOwner);
+  $("group-rename-btn").classList.toggle("hidden", !isOwner);
+  $("group-regen-invite-btn").classList.toggle("hidden", !isOwner);
+  return isOwner;
+}
+
 async function openGroup(groupId, groupName, inviteCode, ownerId) {
   currentGroupId = groupId;
   currentGroupName = groupName;
   currentGroupOwnerId = ownerId || null;
   $("group-view-title").textContent = groupName;
   $("group-invite-code").textContent = inviteCode ? `Invite code: ${inviteCode}` : "";
-  $("owner-add-member").classList.toggle("hidden", !(currentUser && currentGroupOwnerId === currentUser.id));
+  $("group-rename-row").classList.add("hidden");
+  updateGroupOwnerControlsVisibility();
   $("member-search-input").value = "";
   $("member-search-results").innerHTML = "";
   goToScreen("group-screen");
@@ -750,14 +776,83 @@ async function loadMembers() {
     };
   }).sort((a, b) => a.nickname.localeCompare(b.nickname, undefined, { sensitivity: "base" }));
 
-  list.innerHTML = currentMembers.map(m => `
+  // Owner-only per-member actions (make owner / remove) are rendered
+  // next to every member row except the viewer's own -- transferring
+  // ownership or removing yourself both have safer, dedicated flows
+  // elsewhere (the danger zone, and "Leave this group" in Settings).
+  const isOwnerViewing = !!(currentUser && currentGroupOwnerId === currentUser.id);
+
+  list.innerHTML = currentMembers.map(m => {
+    const isYou = m.user_id === currentUser.id;
+    const isGroupOwner = m.user_id === currentGroupOwnerId;
+    const tags = `${isYou ? ' <span class="you-tag">(you)</span>' : ""}${isGroupOwner ? ' <span class="you-tag">(owner)</span>' : ""}`;
+    const ownerActions = (isOwnerViewing && !isYou) ? `
+      <span class="member-owner-actions">
+        <button type="button" class="btn-text btn-small" data-make-owner="${m.user_id}">Make owner</button>
+        <button type="button" class="btn-text btn-small" data-remove-member="${m.user_id}" style="color:var(--danger);">Remove</button>
+      </span>` : "";
+    return `
     <li data-member="${m.user_id}">
-      ${escapeHtml(m.nickname)}${m.user_id === currentUser.id ? ' <span class="you-tag">(you)</span>' : ""}
+      <span class="member-name">${escapeHtml(m.nickname)}${tags}</span>
+      ${ownerActions}
     </li>
-  `).join("");
+  `;
+  }).join("");
 
   document.querySelectorAll("#member-list li").forEach(li => {
     li.addEventListener("click", () => selectMember(li.dataset.member));
+  });
+
+  document.querySelectorAll("#member-list [data-make-owner]").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const targetId = btn.dataset.makeOwner;
+      const member = currentMembers.find(m => m.user_id === targetId);
+      const ok = await confirmAction(
+        `Make ${member ? member.nickname : "this person"} the owner of this group? You'll no longer be the owner yourself.`,
+        { confirmLabel: "Make owner", danger: true }
+      );
+      if (!ok) return;
+      setButtonLoading(btn, true);
+      try {
+        const { error: transferError } = await sb.rpc("transfer_group_ownership", {
+          target_group_id: currentGroupId,
+          new_owner_id: targetId,
+        });
+        if (transferError) { showToast("Couldn't transfer ownership: " + transferError.message, "error"); return; }
+        currentGroupOwnerId = targetId;
+        updateGroupOwnerControlsVisibility();
+        showToast("Ownership transferred.", "success");
+        await loadMembers();
+      } finally {
+        setButtonLoading(btn, false);
+      }
+    });
+  });
+
+  document.querySelectorAll("#member-list [data-remove-member]").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const targetId = btn.dataset.removeMember;
+      const member = currentMembers.find(m => m.user_id === targetId);
+      const ok = await confirmAction(
+        `Remove ${member ? member.nickname : "this person"} from this group?`,
+        { confirmLabel: "Remove", danger: true }
+      );
+      if (!ok) return;
+      setButtonLoading(btn, true);
+      try {
+        const { error: removeError } = await sb.rpc("remove_group_member", {
+          target_group_id: currentGroupId,
+          target_user_id: targetId,
+        });
+        if (removeError) { showToast("Couldn't remove member: " + removeError.message, "error"); return; }
+        showToast("Removed from group.", "success");
+        await loadMembers();
+      } finally {
+        setButtonLoading(btn, false);
+      }
+    });
   });
 }
 
@@ -948,7 +1043,92 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-$("back-to-dashboard").addEventListener("click", () => goToScreen("dashboard-screen"));
+$("back-to-dashboard").addEventListener("click", async () => {
+  goToScreen("dashboard-screen");
+  await loadGroups();
+});
+
+// ---------- Owner-only group management: rename, regenerate invite code, delete ----------
+if ($("group-rename-btn")) {
+  $("group-rename-btn").addEventListener("click", () => {
+    $("group-rename-input").value = currentGroupName || "";
+    $("group-rename-row").classList.remove("hidden");
+    $("group-rename-btn").classList.add("hidden");
+    $("group-rename-input").focus();
+  });
+}
+if ($("group-rename-cancel")) {
+  $("group-rename-cancel").addEventListener("click", () => {
+    $("group-rename-row").classList.add("hidden");
+    $("group-rename-btn").classList.remove("hidden");
+  });
+}
+if ($("group-rename-save")) {
+  $("group-rename-save").addEventListener("click", async () => {
+    const newName = $("group-rename-input").value.trim();
+    if (!newName) { $("group-rename-input").focus(); return; }
+    const btn = $("group-rename-save");
+    setButtonLoading(btn, true);
+    try {
+      const { error } = await sb.from("groups").update({ name: newName }).eq("id", currentGroupId);
+      if (error) { showToast("Couldn't rename group: " + error.message, "error"); return; }
+      currentGroupName = newName;
+      $("group-view-title").textContent = newName;
+      $("group-rename-row").classList.add("hidden");
+      $("group-rename-btn").classList.remove("hidden");
+      showToast("Group renamed.", "success");
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  });
+}
+if ($("group-rename-input")) {
+  $("group-rename-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") $("group-rename-save").click();
+    if (e.key === "Escape") $("group-rename-cancel").click();
+  });
+}
+
+if ($("group-regen-invite-btn")) {
+  $("group-regen-invite-btn").addEventListener("click", async () => {
+    const ok = await confirmAction(
+      "Generate a new invite code for this group? The old code will stop working right away.",
+      { confirmLabel: "Regenerate", danger: true }
+    );
+    if (!ok) return;
+    const btn = $("group-regen-invite-btn");
+    setButtonLoading(btn, true);
+    try {
+      const { data, error } = await sb.rpc("regenerate_invite_code", { target_group_id: currentGroupId });
+      if (error) { showToast("Couldn't regenerate the invite code: " + error.message, "error"); return; }
+      $("group-invite-code").textContent = `Invite code: ${data}`;
+      showToast("New invite code generated.", "success");
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  });
+}
+
+if ($("delete-group-btn")) {
+  $("delete-group-btn").addEventListener("click", async () => {
+    const ok = await confirmAction(
+      `Permanently delete "${currentGroupName}"? This removes the group and everyone's wishlist items in it. This can't be undone.`,
+      { confirmLabel: "Delete group", danger: true }
+    );
+    if (!ok) return;
+    const btn = $("delete-group-btn");
+    setButtonLoading(btn, true);
+    try {
+      const { error } = await sb.from("groups").delete().eq("id", currentGroupId);
+      if (error) { showToast("Couldn't delete the group: " + error.message, "error"); return; }
+      showToast("Group deleted.", "success");
+      goToScreen("dashboard-screen");
+      await loadGroups();
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  });
+}
 
 // ---------- Right-side account/menu drawer ----------
 function openDrawer() {
@@ -1134,16 +1314,18 @@ $("add-item-backdrop").addEventListener("click", closeAddItemModal);
 $("add-item-submit").addEventListener("click", async () => {
   const name = $("item-name-input").value.trim();
   const link = $("item-link-input").value.trim();
+  const ownDescription = $("item-description-input").value.trim();
   if (!name) { $("item-name-input").focus(); return; }
 
-  let description = "";
+  let description = ownDescription;
   let image_url = null;
 
   setButtonLoading($("add-item-submit"), true, "Adding…");
   try {
     // Ask the /api/scrape serverless function for a photo + description
-    // from the link, if one was given. Falls back quietly if it's not
-    // deployed yet or the fetch fails for any reason.
+    // from the link, if one was given. The photo is always used when
+    // available; the description from the scrape only fills in when the
+    // person didn't type their own -- their own words always win.
     if (link) {
       try {
         const res = await fetch("/api/scrape", {
@@ -1153,7 +1335,7 @@ $("add-item-submit").addEventListener("click", async () => {
         });
         if (res.ok) {
           const scraped = await res.json();
-          description = scraped.description || "";
+          if (!description) description = scraped.description || "";
           image_url = scraped.image || null;
         }
       } catch (err) {
@@ -1172,6 +1354,7 @@ $("add-item-submit").addEventListener("click", async () => {
     if (error) { showToast("Couldn't add item: " + error.message, "error"); return; }
 
     $("item-name-input").value = "";
+    $("item-description-input").value = "";
     $("item-link-input").value = "";
     closeAddItemModal();
     showToast(`Added "${name}" to your wishlist.`, "success");
@@ -1232,7 +1415,15 @@ function renderSettingsContent() {
     ` : ""}
 
     ${sectionLabel("Preferences", 18)}
-    ${switchRow("pref-large-text", "Larger text", prefs.largeText)}
+    <div style="margin-bottom:12px;">
+      <span style="display:block; font-size:0.9rem; margin-bottom:6px;">Text size</span>
+      <div class="theme-toggle" id="text-size-choice">
+        <button data-text-size="normal">Normal</button>
+        <button data-text-size="large">Large</button>
+        <button data-text-size="xlarge">XL</button>
+        <button data-text-size="huge">Huge</button>
+      </div>
+    </div>
     ${switchRow("pref-compact-view", "Compact wishlist cards", prefs.compactView)}
     ${switchRow("pref-confirm-remove", "Confirm before removing an item", prefs.confirmRemove)}
 
@@ -1254,7 +1445,16 @@ function renderSettingsContent() {
   });
   applyTheme(localStorage.getItem("wishlist-theme") || "system");
 
-  $("pref-large-text").addEventListener("change", (e) => setPref("largeText", e.target.checked));
+  document.querySelectorAll('#text-size-choice [data-text-size]').forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.textSize === prefs.textSize);
+    btn.addEventListener("click", () => {
+      setPref("textSize", btn.dataset.textSize);
+      document.querySelectorAll('#text-size-choice [data-text-size]').forEach(b => {
+        b.classList.toggle("active", b.dataset.textSize === prefs.textSize);
+      });
+    });
+  });
+
   $("pref-compact-view").addEventListener("change", (e) => setPref("compactView", e.target.checked));
   $("pref-confirm-remove").addEventListener("change", (e) => setPref("confirmRemove", e.target.checked));
 
@@ -1289,6 +1489,10 @@ function renderSettingsContent() {
     });
 
     $("settings-leave-group-btn").addEventListener("click", async () => {
+      if (currentGroupOwnerId === currentUser.id) {
+        showToast("You're the owner of this group -- make someone else the owner, or delete the group, before leaving.", "error");
+        return;
+      }
       const ok = await confirmAction("Leave this group? You can rejoin later with the invite code.", { confirmLabel: "Leave group", danger: true });
       if (!ok) return;
       const btn = $("settings-leave-group-btn");
